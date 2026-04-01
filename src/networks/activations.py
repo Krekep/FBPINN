@@ -1,14 +1,18 @@
 from typing import Callable
 
-import tensorflow as tf
+import torch
+import keras
 
 
 def perceptron_threshold(x, threshold: float = 1.0):
-    return tf.where(x >= threshold, 1.0, 0.0)
+    return keras.ops.where(x >= threshold, 1.0, 0.0)
 
 
-@tf.function
-def parabolic(x: tf.Tensor, beta: float = 0, p: float = 1 / 5):
+def sin_act(x):
+    return keras.ops.sin(x)
+
+
+def parabolic(x: torch.Tensor, beta: float = 0, p: float = 1 / 5):
     """
     Activation function is described in https://rairi.frccsc.ru/en/publications/426
 
@@ -26,27 +30,28 @@ def parabolic(x: tf.Tensor, beta: float = 0, p: float = 1 / 5):
     new_x: tf.Tensor
         Data vector after applying activation function
     """
-    return tf.where(x >= 0.0, beta + tf.sqrt(2.0 * p * x), beta - tf.sqrt(-2.0 * p * x))
+    return keras.ops.where(x >= 0.0, beta + keras.ops.sqrt(2.0 * p * x), beta - keras.ops.sqrt(-2.0 * p * x))
 
 
 _activation_name = {
-    "elu": tf.keras.activations.elu,
-    "relu": tf.keras.activations.relu,
-    "gelu": tf.keras.activations.gelu,
-    "selu": tf.keras.activations.selu,
-    "exponential": tf.keras.activations.exponential,
-    "linear": tf.keras.activations.linear,
-    "sigmoid": tf.keras.activations.sigmoid,
-    "hard_sigmoid": tf.keras.activations.hard_sigmoid,
-    "swish": tf.keras.activations.swish,
-    "tanh": tf.keras.activations.tanh,
-    "softplus": tf.keras.activations.softplus,
-    "softsign": tf.keras.activations.softsign,
+    "elu": keras.activations.elu,
+    "relu": keras.activations.relu,
+    "gelu": keras.activations.gelu,
+    "selu": keras.activations.selu,
+    "exponential": keras.activations.exponential,
+    "linear": torch.nn.Identity(),
+    "sigmoid": torch.nn.Sigmoid(),
+    "hard_sigmoid": torch.nn.Hardsigmoid(),
+    "swish": torch.nn.SiLU(),
+    "tanh": torch.nn.Tanh(),
+    "softplus": keras.activations.softplus,
+    "softsign": keras.activations.softsign,
     "parabolic": parabolic,
+    "sin": sin_act
 }
 
 
-def get(name: str) -> Callable:
+def get_activation(name: str) -> Callable:
     """
     Get activation function by name
     Parameters

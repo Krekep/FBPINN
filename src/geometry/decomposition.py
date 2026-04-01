@@ -1,218 +1,119 @@
-from math import ceil, inf
-from typing import Callable
+import torch
 
-import numpy as np
-import numpy.typing as npt
-import tensorflow as tf
+from src.geometry.base_decomposition import RectangleDomain, Block, BaseDecomposition
 
 
-class RectangleDomain:
-    left_down_corner: list[float]
-    right_up_corner: list[float]
-
-    def __init__(
-        self, left_corner: list[float], right_corner: list[float], time_index: int = -1
-    ) -> None:
-        self.left_down_corner = left_corner
-        self.right_up_corner = right_corner
-        self.time_index = time_index  # for window function
-
-
-class Block:
-    __slots__ = [
-        "window_function",
-        "left_down_corner",
-        "right_up_corner",
-        "vmax",
-        "vmin",
-        "losses",
-        "data",
-        "mean",
-        "std",
-        "data_size",
-        "__weakref__",
-    ]
-
-    def get_data(self) -> tf.Tensor:
-        data = tf.random.uniform(
-            shape=self.data.shape,
-            minval=self.left_down_corner,
-            maxval=self.right_up_corner,
-            dtype=tf.float32,
-        )
-        return data
-        # return self.data
-
-    # @tf.function
-    def normalization(self, data: tf.Tensor) -> tf.Tensor:
-        data_norm = (
-            2.0 * ((data - self.vmin) / (self.vmax - self.vmin)) - 1.0
-        )  # subdomain normalisation --- R -> [-1; 1]
-        # data_norm = (data - self.mean) / self.std  # subdomain normalisation
-        return data_norm
-
-    # @tf.function
-    def unnormalization(self, data: tf.Tensor) -> tf.Tensor:
-        data_unnorm = (data + 1.0) * (
-            self.vmax - self.vmin
-        ) / 2 + self.vmin  # output unnormalisation --- [-1; 1] -> R
-        # data_unnorm = data * self.std + self.mean  # output unnormalisation
-        return data_unnorm
-
-    def set_losses(
-        self,
-        losses: list[tuple[Callable, list[tuple[float]]]],
-        time_input: bool = False,
-    ) -> None:
-        res = []
-        if time_input:
-            left_down_corner = [-inf] + self.left_down_corner
-            right_up_corner = [inf] + self.right_up_corner
-        else:
-            left_down_corner = self.left_down_corner
-            right_up_corner = self.right_up_corner
-        for loss, var_bound in losses:
-            fl = True
-            for lc, var_b, rc in zip(left_down_corner, var_bound, right_up_corner):
-                if var_b is not None:
-                    for b in var_b:
-                        if b < lc or rc < b:
-                            fl = False
-                            break
-            if fl:
-                res.append(loss)
-        self.losses = res
-
-    @tf.function
-    def forward(self, model, x):
-        x_norm = 2.0 * ((x - self.vmin) / (self.vmax - self.vmin)) - 1.0
-        predicted = model(x_norm)
-        predicted_unnorm: tf.Tensor = (predicted + 1.0) * (
-            self.vmax - self.vmin
-        ) / 2 + self.vmin
-        windowed = self.window_function(x)
-        result = windowed * predicted_unnorm
-        return result
-
-    def set_data(self, data):
-        self.data: tf.Tensor = data
-        self.data_size = data.shape
-        self.mean: float = np.mean(data)
-        self.std: float = np.std(data)
-
-    def __init__(self, left_corner, right_corner, window_function) -> None:
-        self.left_down_corner: list[float] = left_corner
-        self.right_up_corner: list[float] = right_corner
-        self.window_function: Callable[
-            [npt.NDArray[np.float64]],
-            npt.NDArray[np.float64]
-            # ] = tf.function(window_function)
-        ] = window_function
-
-        self.vmax: tf.Tensor = tf.constant(
-            max(right_corner + left_corner), dtype=tf.float32
-        )
-        self.vmin: tf.Tensor = tf.constant(
-            min(right_corner + left_corner), dtype=tf.float32
-        )
-
-
-class Decomposition:
-    blocks: list[Block]
-    overlap: float
+class DecompositionND(BaseDecomposition):
+    """
+    Class for N-dimensional domain decomposition
+    """
 
     def __init__(
         self,
         domain: RectangleDomain,
+        bbox_left: list[float],
+        bbox_right: list[float],
         overlap: list[float],
         block_size: list[float],
-        offset: bool = False,
+        block_scales: list[float],
+        block_shift: list[float],
         points_per_block: int = 100,
+        device: str = ""
     ) -> None:
+        """
+        Parameters
+        ----------
+        domain: RectangleDomain
+        overlap: list[float]
+            overlaps per dimension
+        bbox_left: list[float]
+            Left lower corner of bounding n-d rectangle
+        bbox_right: list[float]
+            Right upper corner of bounding n-d rectangle
+        block_size: list[float]
+            size of blocks per dimension
+        block_scales: list[float]
+            Unnormalization multiplier for blocks per dimension
+        block_shift: list[float]
+            Unnormalization term for blocks per dimension
+        points_per_block: int
+        device: str
+            `cpu`/`cuda`/etc.
+        """
+        super().__init__(
+            overlap,
+            block_size,
+            block_scales,
+            block_shift,
+            points_per_block,
+            device
+        )
         self.domain = domain
-        self.overlap = tf.convert_to_tensor(overlap, dtype=tf.float32)
-        self.block_size = block_size
-
-        self.blocks = []
-        self.blocks_per_axis = []
-        for i in range(len(domain.left_down_corner)):
-            if offset:
-                domain.left_down_corner[i] -= overlap[i]
-                domain.right_up_corner[i] += overlap[i]
-
+        self.bbox_left = bbox_left
+        self.bbox_right = bbox_right
+        self.points_per_block = points_per_block
+        for i in range(len(bbox_left)):
             number_of_blocks = 1
-            last = domain.left_down_corner[i] + block_size[i]
-            while last < domain.right_up_corner[i]:
+            last = bbox_left[i] + block_size[i]
+            while last < bbox_right[i]:
                 number_of_blocks += 1
                 last = last - overlap[i] + block_size[i]
-            self.blocks_per_axis.append(number_of_blocks)
+            self.num_blocks_per_axis.append(number_of_blocks)
 
-        n = len(domain.left_down_corner)
-        self.build_decomposition(0, [0] * n, n, overlap, points_per_block)
+        self.build_decomposition()
+        self.prepare_batched()
 
-    def get_window_function(
-        self, left_corner, right_corner, omega: float = 30
-    ) -> Callable[[tf.Tensor], tf.Tensor]:
-        def sigmoid(x: tf.Tensor) -> tf.Tensor:
-            x_clipped = tf.clip_by_value(x, -50.0, 50.0)
-            return tf.maximum(1 / (1 + tf.math.exp(-x_clipped)), 1e-10)
+    def build_decomposition(self) -> None:
+        n = len(self.domain.left_down_corner)
+        self._build_decomposition(0, [0] * n, n)
 
-        left_corner_np = tf.constant(
-            left_corner[self.domain.time_index + 1 :], dtype=tf.float32
-        )
-        right_corner_np = tf.constant(
-            right_corner[self.domain.time_index + 1 :], dtype=tf.float32
-        )
-
-        def window_function(x_in: tf.Tensor) -> tf.Tensor:
-            """$ w_i(x) = \prod_j^d (\phi((x^j - a_i^j) / \sigma_i^j) \phi((b_i^j - x^j) / \siqma_i^j) ) $"""
-            x = x_in  # x have shape (n, d)
-            # Calculate bounds
-            a = left_corner_np + self.overlap / 2.0
-            b = right_corner_np - self.overlap / 2.0
-            # Compute sigmoids for each bound
-            left = sigmoid((x - a) * omega)  # Форма (n, d)
-            right = sigmoid((b - x) * omega)  # Форма (n, d)
-
-            result = tf.reduce_prod(left * right, axis=1)  # Shape (n,)
-            return tf.expand_dims(result, axis=1)  # Shape (n, 1)
-
-        return window_function
-
-    def build_decomposition(
+    def _build_decomposition(
         self,
         current_ax: int,
         current_idx: list[int],
         n: int,
-        overlap: list[float],
-        points_per_block: int = 50,
     ) -> None:
+        """
+        Decompose N-dimensional domain to list of sub-blocks
+
+        Parameters
+        ----------
+        current_ax: int
+            Dimension to process (from 0 to N-1)
+        current_idx: list[int]
+            How much we already process in respective axis
+        n: int
+            Number of domain dimensions
+        """
         if current_ax == n - 1:
+            if len(self.blocks_per_axis) == 0:  # 1D case
+                self.blocks_per_axis.append([])
+
             left_corner = []
             right_corner = []
             for j in range(n):
-                curr_id = current_idx[j]
+                curr_id = current_idx[j]  # offset in axis
                 lc = (
-                    self.domain.left_down_corner[j]
-                    + (self.block_size[j] - overlap[j]) * curr_id
+                    self.bbox_left[j]
+                    + (self.block_size[j] - self.overlap[j]) * curr_id
                 )
                 rc = (
-                    self.domain.left_down_corner[j]
+                    self.bbox_left[j]
                     + self.block_size[j]
-                    + (self.block_size[j] - overlap[j]) * curr_id
+                    + (self.block_size[j] - self.overlap[j]) * curr_id
                 )
 
                 left_corner.append(lc)
                 right_corner.append(rc)
-            for i in range(self.blocks_per_axis[current_ax]):
-                left_corner[-1] = (
-                    self.domain.left_down_corner[-1]
-                    + (self.block_size[-1] - overlap[-1]) * i
+            for i in range(self.num_blocks_per_axis[current_ax]):
+                left_corner[-1] = (  # in current axis we move only last boundary of block
+                    self.bbox_left[-1]
+                    + (self.block_size[-1] - self.overlap[-1]) * i
                 )
                 right_corner[-1] = (
-                    self.domain.left_down_corner[-1]
+                    self.bbox_left[-1]
                     + self.block_size[-1]
-                    + (self.block_size[-1] - overlap[-1]) * i
+                    + (self.block_size[-1] - self.overlap[-1]) * i
                 )
                 lc_list = left_corner.copy()
                 rc_list = right_corner.copy()
@@ -223,22 +124,58 @@ class Decomposition:
                 data_rc = [
                     min(a, b) for a, b in zip(rc_list, self.domain.right_up_corner)
                 ]
-                size = [points_per_block] + [len(lc_list)]
-                data = tf.random.uniform(
-                    # shape=size + [1],
-                    shape=size,
-                    minval=data_lc,
-                    maxval=data_rc,
-                    dtype=tf.float32,
+                size = [self.points_per_block] + [len(lc_list)]
+                sampler = (
+                    lambda n: torch.rand([n] + [len(lc_list)], device=self.device)
+                              * (torch.tensor(data_rc, device=self.device)
+                                 - torch.tensor(data_lc, device=self.device))
+                              + torch.tensor(data_lc, device=self.device)
                 )
-                data = tf.sort(data, axis=0)
-                block = Block(data_lc, data_rc, window_function)
-                block.set_data(data)
+                block = Block(
+                    data_shape=size,
+                    left_corner=lc_list,
+                    right_corner=rc_list,
+                    window_function=window_function,
+                    out_denorm_scale=self.block_scales,
+                    out_denorm_shift=self.block_shift,
+                    sampler=sampler,
+                    device=self.device,
+                )
                 self.blocks.append(block)
+                self.blocks_per_axis[-1].append(block)
         else:
-            while current_idx[current_ax] < self.blocks_per_axis[current_ax]:
-                self.build_decomposition(
-                    current_ax + 1, current_idx, n, overlap, points_per_block
+            while current_idx[current_ax] < self.num_blocks_per_axis[current_ax]:
+                self.blocks_per_axis.append([])
+                self._build_decomposition(
+                    current_ax + 1, current_idx, n
                 )
                 current_idx[current_ax] += 1
             current_idx[current_ax] = 0
+
+
+if __name__ == "__main__":
+    domain = RectangleDomain([0, 0], [4, 5])
+    dec = DecompositionND(
+        domain=domain,
+        overlap=[1, 1],
+        block_size=[2, 2],
+        block_scales=[1, 2],
+        block_shift=[0, 0.5],
+        points_per_block=100
+    )
+    print(dec.blocks_per_axis)
+    print(dec.num_blocks_per_axis)
+    print(dec.blocks)
+
+    domain = RectangleDomain([0], [4])
+    dec = DecompositionND(
+        domain=domain,
+        overlap=[1],
+        block_size=[2],
+        block_scales=[1],
+        block_shift=[1],
+        points_per_block=100
+    )
+    print(dec.blocks_per_axis)
+    print(dec.num_blocks_per_axis)
+    print(dec.blocks)

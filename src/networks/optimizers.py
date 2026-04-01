@@ -1,20 +1,17 @@
 from typing import Callable
 
-from tensorflow import keras
+import torch
 
 _optimizers: dict = {
-    "Adadelta": keras.optimizers.Adadelta,
-    "Adafactor": keras.optimizers.Adafactor,
-    "Adagrad": keras.optimizers.Adagrad,
-    "Adam": keras.optimizers.Adam,
-    "AdamW": keras.optimizers.AdamW,
-    "Adamax": keras.optimizers.Adamax,
-    "Ftrl": keras.optimizers.Ftrl,
-    "Lion": keras.optimizers.Lion,
-    "LossScaleOptimizer": keras.optimizers.LossScaleOptimizer,
-    "Nadam": keras.optimizers.Nadam,
-    "RMSprop": keras.optimizers.RMSprop,
-    "SGD": keras.optimizers.SGD,
+    "Adadelta": torch.optim.Adadelta,
+    "Adafactor": torch.optim.Adafactor,
+    "Adagrad": torch.optim.Adagrad,
+    "Adam": torch.optim.Adam,
+    "AdamW": torch.optim.AdamW,
+    "Adamax": torch.optim.Adamax,
+    "Nadam": torch.optim.NAdam,
+    "RMSprop": torch.optim.RMSprop,
+    "SGD": torch.optim.SGD,
 }
 
 

@@ -1,119 +1,64 @@
 from abc import ABC
 from typing import Callable
 
-import tensorflow as tf
-from tensorflow import keras
+import keras
 
 
-@tf.function
 def sign(x):
-    return tf.where(x < 0.0, -1.0, 1.0)
+    return keras.ops.where(x < 0.0, -1.0, 1.0)
 
 
-class RelativeAbsoluteError(tf.keras.losses.Loss, ABC):
+def relative_absolute_error(y_true, y_pred):
     """
     This class provides RAE loss function:
     $$ RAE = \frac{\Sum^n_{i=1} |y_i - \hat(y)_i|}{\Sum^n_{i=1} |y_i - \bar(y)|} $$
     """
+    true_mean = keras.ops.mean(y_true)
+    squared_error_num = keras.ops.sum(keras.ops.abs(y_true - y_pred))
+    squared_error_den = keras.ops.sum(keras.ops.abs(y_true - true_mean))
 
-    def __init__(self, reduction=tf.keras.losses.Reduction.NONE, name="rae", **kwargs):
-        super(RelativeAbsoluteError, self).__init__(
-            reduction=reduction, name=name, **kwargs
-        )
+    squared_error_den = keras.ops.cond(
+        pred=keras.ops.equal(squared_error_den, 0.0),
+        true_fn=lambda: 1.0,
+        false_fn=lambda: squared_error_den,
+    )
 
-    def __call__(self, y_true, y_pred, sample_weight=None):
-        true_mean = tf.reduce_mean(y_true)
-        squared_error_num = tf.reduce_sum(tf.abs(y_true - y_pred))
-        squared_error_den = tf.reduce_sum(tf.abs(y_true - true_mean))
-
-        squared_error_den = tf.cond(
-            pred=tf.equal(squared_error_den, tf.constant(0.0)),
-            true_fn=lambda: tf.constant(1.0),
-            false_fn=lambda: squared_error_den,
-        )
-
-        loss = squared_error_num / squared_error_den
-        return loss
-
-    def call(self, y_true, y_pred):
-        return self(y_true, y_pred)
+    loss = squared_error_num / squared_error_den
+    return loss
 
 
-class RelativeL1Loss(tf.keras.losses.Loss, ABC):
+def relative_l1_loss(y_true, y_pred):
     """
     This class provides Relative L1 loss function:
     $$ Loss = \frac{\frac{1}{n} * \Sum^n_{i=1} |y_i - \hat(y)_i|}{\frac{1}{n} * \Sum^n_{i=1} |y_i|}  $$
     """
-
-    def __init__(
-        self, reduction=tf.keras.losses.Reduction.NONE, name="RelativeL1Loss", **kwargs
-    ):
-        super(RelativeL1Loss, self).__init__(reduction=reduction, name=name, **kwargs)
-
-    def __call__(self, y_true, y_pred, sample_weight=None):
-        return tf.reduce_mean(tf.abs(y_true - y_pred)) / tf.reduce_mean(tf.abs(y_true))
-
-    def call(self, y_true, y_pred):
-        return self(y_true, y_pred)
+    return keras.ops.mean(keras.ops.abs(y_true - y_pred)) / keras.ops.mean(keras.ops.abs(y_true))
 
 
-class MaxAbsoluteDeviation(tf.keras.losses.Loss, ABC):
+def max_absolute_error(y_true, y_pred):
     """
     This class provides Max Absolute Deviation loss function:
     $$ MAD = \max |y - \hat(y)| $$
     """
+    loss = keras.ops.max(keras.ops.abs(y_true - y_pred))
+    return loss
 
-    def __init__(
-        self, reduction=tf.keras.losses.Reduction.NONE, name="my_mae", **kwargs
-    ):
-        super(MaxAbsoluteDeviation, self).__init__(
-            reduction=reduction, name=name, **kwargs
-        )
-
-    def __call__(self, y_true, y_pred, sample_weight=None):
-        loss = tf.math.reduce_max(tf.math.abs(y_true - y_pred))
-        return loss
-
-    def call(self, y_true, y_pred):
-        return self(y_true, y_pred)
-
-
-class MaxAbsolutePercentageError(tf.keras.losses.Loss, ABC):
+def max_absolute_percentage_error(y_true, y_pred):
     """
     This class provides Max Absolute Percentage Error loss function:
     $$ MAD = \max |\frac{y - \hat(y)}{y}| $$
     """
-
-    def __init__(
-        self, reduction=tf.keras.losses.Reduction.NONE, name="maxAPE", **kwargs
-    ):
-        super(MaxAbsolutePercentageError, self).__init__(
-            reduction=reduction, name=name, **kwargs
-        )
-
-    def __call__(self, y_true, y_pred, sample_weight=None):
-        loss = tf.math.reduce_max(tf.math.abs((y_true - y_pred) / y_true)) * 100.0
-        return loss
-
-    def call(self, y_true, y_pred):
-        return self(y_true, y_pred)
+    loss = keras.ops.max(keras.ops.abs((y_true - y_pred) / y_true)) * 100.0
+    return loss
 
 
-class RMSE(tf.keras.losses.Loss, ABC):
+def RMSE(y_true, y_pred):
     """
     This class provides Root Mean squared Error loss function:
     $$ MAD = \sqrt{MSE} $$
     """
-
-    def __init__(self, reduction=tf.keras.losses.Reduction.NONE, name="RMSE", **kwargs):
-        super(RMSE, self).__init__(reduction=reduction, name=name, **kwargs)
-
-    def __call__(self, y_true, y_pred, sample_weight=None):
-        loss = tf.math.sqrt(tf.math.reduce_mean((y_pred - y_true) ** 2))
-        return loss
-
-    def call(self, y_true, y_pred):
-        return self(y_true, y_pred)
+    loss = keras.ops.sqrt(keras.ops.mean((y_pred - y_true) ** 2))
+    return loss
 
 
 # Reduction should be set to None?
@@ -122,15 +67,15 @@ _losses: dict = {
     "LogCosh": keras.losses.LogCosh(),
     "MeanAbsoluteError": keras.losses.MeanAbsoluteError(),
     "MeanAbsolutePercentageError": keras.losses.MeanAbsolutePercentageError(),
-    "MaxAbsolutePercentageError": MaxAbsolutePercentageError(),
+    "MaxAbsolutePercentageError": max_absolute_percentage_error,
     "MeanSquaredError": keras.losses.MeanSquaredError(),
     "MSE": keras.losses.MeanSquaredError(),
-    "RootMeanSquaredError": RMSE(),
-    "RMSE": RMSE(),
+    "RootMeanSquaredError": RMSE,
+    "RMSE": RMSE,
     "MeanSquaredLogarithmicError": keras.losses.MeanSquaredLogarithmicError(),
-    "RelativeAbsoluteError": RelativeAbsoluteError(),
-    "MaxAbsoluteDeviation": MaxAbsoluteDeviation(),
-    "RelativeL1Loss": RelativeL1Loss(),
+    "RelativeAbsoluteError": relative_absolute_error,
+    "MaxAbsoluteDeviation": max_absolute_error,
+    "RelativeL1Loss": relative_l1_loss,
 }
 
 
@@ -150,7 +95,7 @@ def get_loss(name: str):
     return _losses.get(name)
 
 
-def get_all_loss_functions() -> dict[str, tf.keras.losses.Loss]:
+def get_all_loss_functions() -> dict[str, keras.losses.Loss]:
     """
     Get all loss functions
     Parameters

@@ -1,23 +1,22 @@
 from collections import defaultdict
 from typing import Type
 
-import numpy as np
-from tensorflow import Tensor
-from tensorflow import keras
+import torch
 
-from src.networks.layers.tf_dense import TensorflowDense
+from src.networks.layers.tf_dense import DenseLayer
 
 
 def create(
     inp_size,
     shape,
     activation="linear",
-    weight=keras.initializers.get("ones"),
-    bias=keras.initializers.get("zeros"),
+    weight=torch.nn.init.ones_,
+    bias=torch.nn.init.zeros_,
     layer_type="Dense",
     is_debug=False,
+    device=None,
     **kwargs
-) -> keras.layers.Layer:
+) -> torch.nn.Module:
     """
     Create layer by parameters
 
@@ -45,12 +44,12 @@ def create(
     # mypy thinks the keras.layers.Layer constructor is being called,
     # so it complains about unknown arguments and a large number of arguments
     layer = _create_functions[layer_type](
-        inp_size, shape, activation, weight, bias, is_debug=is_debug, **kwargs  # type: ignore
+        inp_size, shape, activation, weight, bias, is_debug=is_debug, device=device, **kwargs  # type: ignore
     )
     return layer
 
 
-_create_functions: defaultdict[str, Type[keras.layers.Layer]] = defaultdict(
-    lambda: TensorflowDense
+_create_functions: defaultdict[str, Type[torch.nn.Module]] = defaultdict(
+    lambda: DenseLayer
 )
-_create_functions["Dense"] = TensorflowDense
+_create_functions["Dense"] = DenseLayer

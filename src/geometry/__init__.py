@@ -1,1 +1,1 @@
-from src.geometry.decomposition import Decomposition, Block, RectangleDomain
+from src.geometry.decomposition import DecompositionND, Block, RectangleDomain

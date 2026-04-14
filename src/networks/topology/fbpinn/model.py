@@ -260,7 +260,7 @@ class FBPINN(torch.nn.Module):
         vmaxs = self.all_vmaxs.unsqueeze(1)  # (N, 1, d)
         x_norm = 2.0 * (x_exp - vmins) / (vmaxs - vmins) - 1.0  # (N, N_pts, d)
 
-        if active_mask is None or active_mask.all():
+        if active_mask is None:
             outputs = self._manual_forward(self.stacked_w, self.stacked_b, x_norm)
         else:
             active_idx = active_mask.nonzero(as_tuple=True)[0]
@@ -276,18 +276,18 @@ class FBPINN(torch.nn.Module):
                 inactive_out = self._manual_forward(inact_w, inact_b, x_norm[inactive_idx])
 
             outputs_list = [None] * N_blocks
-            for i, idx in enumerate(active_idx.tolist()):
-                outputs_list[idx] = active_out[i]
-            for i, idx in enumerate(inactive_idx.tolist()):
-                outputs_list[idx] = inactive_out[i]
-            outputs = torch.stack(outputs_list, dim=0)  # (N, N_pts, out_d)
+            N_pts = x.shape[0]
+            outputs = torch.empty(N_blocks, N_pts, self.output_size, device=x.device, dtype=x.dtype)
+            outputs[active_idx] = active_out
+            outputs[inactive_idx] = inactive_out  # (N, N_pts, d)
 
         scales = self.all_scales.unsqueeze(1)  # (N, 1, d)
         shifts = self.all_shifts.unsqueeze(1)
         outputs_phys = outputs * scales + shifts
 
-        windows = self.decomposition.batched_window(x)  # (N, N_pts, 1)
-        return (outputs_phys * windows).sum(dim=0)  # (N_pts, out_d)
+        # with torch.no_grad():
+        windows = self.decomposition.batched_window(x).squeeze(-1)  # (N, N_pts)
+        return torch.einsum('bn,bnd->nd', windows, outputs_phys)  # (N_pts, out_d)
 
     def custom_compile(
             self,
@@ -324,13 +324,14 @@ class FBPINN(torch.nn.Module):
         self.rate_ = rate
         self.loss_func_ = loss_func
         self.metric_funcs_ = metric_funcs
-        all_params = [p for nn, _ in self.blocks for p in nn.parameters()]
-        self.optimizer = optimizers.get_optimizer(optimizer)(all_params, lr=rate)
+        # all_params = [p for nn, _ in self.blocks for p in nn.parameters()]
+        all_params = self.stacked_w + self.stacked_b
+        self.optimizer = optimizers.get_optimizer(optimizer)(all_params, lr=rate, fused=True)
 
     def forward(
             self,
             x: torch.Tensor,
-            active_models: Optional[list[tuple[PhysicsInformedNet, Block]]] = None,
+            active_indices: Optional[list[int]] = None,
             **kwargs,
     ):
         """
@@ -339,23 +340,19 @@ class FBPINN(torch.nn.Module):
         ----------
         x: torch.Tensor
             Input tensor
-        active_models: Optional[list[tuple[PhysicsInformedNet, Block]]]
-            Subset of `self.blocks` from submodels that require gradient calculation.
+        active_indices: Optional[list[int]]
+            Indices subset of `self.blocks` from submodels that require gradient calculation.
 
         Returns
         -------
         torch.Tensor
             Predicted output
         """
-        if active_models is None:
+        if active_indices is None or len(active_indices) == len(self.blocks):
             return self._batched_call(x, active_mask=None)
 
-        active_set = {id(block) for _, block in active_models}
-        active_mask = torch.tensor(
-            [id(block) in active_set for _, block in self.blocks],
-            dtype=torch.bool,
-            device=x.device
-        )
+        active_mask = torch.zeros(len(self.blocks), dtype=torch.bool, device=x.device)
+        active_mask[active_indices] = True
         return self._batched_call(x, active_mask=active_mask)
 
     def call(self, x, active_models: list = None, **kwargs):
@@ -398,6 +395,7 @@ class FBPINN(torch.nn.Module):
         path: str
             File path
         """
+        self._scatter_gradients()
         torch.save(self.state_dict(), path)
 
     def load_weights(self, path: str) -> None:

@@ -16,7 +16,7 @@ from experiments.train_strategies.Functions.LH_PDE1 import LH_PDE1
 
 device = "cuda" if torch.cuda.is_available() else "cpu"
 x_lim = 1.0
-t_lim = 0.25
+t_lim = 0.5
 domain_lc = [0, 0]
 domain_rc = [t_lim, x_lim]
 pde = LH_PDE1(end_time=t_lim, device=device)
@@ -39,7 +39,7 @@ overlap = [0.15, 0.25]
 boundary_lc = [domain_lc[0] - block_size[0] / 2, domain_lc[1] - block_size[1] / 2]
 boundary_rc = [domain_rc[0] + block_size[0] / 2, domain_rc[1] + block_size[1] / 2]
 domain = RectangleDomain(left_corner=domain_lc, right_corner=domain_rc)
-points_per_block = 2000
+points_per_block = 1000
 block_scales = {
   "y": 1
 }
@@ -66,7 +66,7 @@ model_config = {
     "input_size": 2,
     "output_size": 1,
     "activation_func": ["tanh", "tanh", "linear"],
-    "models_size": [16, 16],
+    "models_size": [32, 32],
     "device": device,
     "weight": torch.nn.init.xavier_uniform_,
     "biases": torch.nn.init.zeros_
@@ -109,16 +109,16 @@ mlflow.log_params(layer_scheduler_config)
 loss_scheduler_config = {
     "k": 5000,
     "boundary_indices": list(range(len(pde.sub_losses))),
-    "loss_weights": [100, 1, 1, 1, 10],
+    "loss_weights": [10, 1, 1, 1, 10],
 }
 loss_scheduler = LossScheduler(**loss_scheduler_config)
 mlflow.log_param("Loss scheduler", "LossScheduler")
 mlflow.log_params(loss_scheduler_config)
 
 train_config = {
-    "epochs": 60_000,
+    "epochs": 180_000,
     "patience": 500_000,
-    "eval_interval": 50,
+    "eval_interval": 5,
     "log_interval": 1000,
     "mode": "layer",
     "layer_scheduler": layer_scheduler,

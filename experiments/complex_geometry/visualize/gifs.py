@@ -75,12 +75,12 @@ def update_combined(frame):
         scs_e[i].set_array(rel_l1[:, i])
 
 
-model_name = "FBPINN_full_6635"
+model_name = "FBPINN_full_5686"
 torch.manual_seed(42)
 random.seed(42)
 np.random.seed(42)
 CHECKPOINT_DIR = "../checkpoints" + f"/{model_name}"
-LAST_CHECKPOINT = 65_000
+LAST_CHECKPOINT = 100_000
 CHECKPOINT_STEP = 5000  # use every k-th checkpoint (sorted by step number)
 POINT_STEP = 10  # subsample 1-in-N points for plotting
 GIF_FPS = 2
@@ -94,8 +94,18 @@ block_size = (0.25, 0.25)
 overlap = (0.08, 0.08)
 bbox_left = (-block_size[0] / 2, -block_size[1] / 2)
 bbox_right = (2000 * scale + block_size[0] / 2, 1200 * scale + block_size[1] / 2)
-block_scales = {"vx": 0.00137, "vy": 0.00142, "pressure": 1.46e-5}
-block_shifts = {"vx": 0.007, "vy": -3.5e-6, "pressure": -2.93e-6}
+# block_scales = {"vx": 0.00137, "vy": 0.00142, "pressure": 1.46e-5}
+# block_shifts = {"vx": 0.007, "vy": -3.5e-6, "pressure": -2.93e-6}
+block_scales = {
+  "vx": 0.003505,
+  "vy": 0.00129,
+  "pressure": 1.69e-05
+}
+block_shifts = {
+  "vx":  0.0072,
+  "vy": -1.9e-06,
+  "pressure": -7.9e-06,
+}
 output_scale = torch.tensor(
     [block_scales["pressure"], block_scales["vx"], block_scales["vy"]],
     device=device, requires_grad=False
@@ -125,13 +135,13 @@ print(f"Decomposition has {len(dec.blocks)} blocks")
 model_config = {
     "input_size": 2,
     "output_size": 3,
-    "activation_func": ["tanh", "tanh", "linear"],
-    "models_size": [16, 16],
+    "activation_func": ["tanh", "tanh", "tanh", "linear"],
+    "models_size": [16, 16, 16],
     "device": device,
     "weight": torch.nn.init.xavier_uniform_,
     "biases": torch.nn.init.zeros_,
 }
-pde = CylinderViscid(cylinder=hole, scale=scale, device=device, path_to_data="../../../")
+pde = CylinderViscid(cylinder=hole, scale=scale, device=device, path_to_data="../")
 nn = FBPINN(
     **model_config,
     physic_loss=pde.phys_loss,

@@ -26,7 +26,7 @@ def scatter_grid(axes_row, xy, values_list, titles, vranges):
 
 
 phys_func = CylinderViscid
-model = "FBPINN_full_7449"
+model = "FBPINN_full_5957"
 CHECKPOINT_DIR = "../checkpoints/" + model
 OUTPUT_DIR = "../predictions"
 POINT_STEP = 10
@@ -77,13 +77,13 @@ print(f"Decomposition has {len(dec.blocks)} blocks")
 model_config = {
     "input_size": 2,
     "output_size": 3,
-    "activation_func": ["tanh", "tanh", "linear"],
-    "models_size": [32, 32],
+    "activation_func": ["tanh", "tanh", "tanh", "linear"],
+    "models_size": [24, 24, 24],
     "device": device,
     "weight": torch.nn.init.xavier_uniform_,
     "biases": torch.nn.init.zeros_,
 }
-pde = phys_func(cylinder=hole, scale=scale, device=device, path_to_data="../../../")
+pde = phys_func(cylinder=hole, scale=scale, device=device, path_to_data="../")
 nn = FBPINN(
     **model_config,
     physic_loss=pde.phys_loss,
@@ -92,7 +92,8 @@ nn = FBPINN(
 )
 nn.to(device)
 
-path_to_ckpt = CHECKPOINT_DIR + "/fbpinn123_best.weights.h5"
+path_to_ckpt = CHECKPOINT_DIR + "/fbpinn123_2000.weights.h5"
+# path_to_ckpt = CHECKPOINT_DIR + "/fbpinn123_best.weights.h5"
 nn.load_weights(path_to_ckpt)
 nn.eval()
 

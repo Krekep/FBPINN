@@ -45,12 +45,16 @@ class Block:
         -------
         data: torch.Tensor
         """
-        if self.sampler is not None:
-            pts = self.sampler(self.data_shape[0])
-            data = torch.tensor(pts, dtype=torch.float32, device=self.vmin.device)
-        else:
-            data = (torch.rand(self.data_shape, device=self.vmin.device) * (self.vmax - self.vmin) + self.vmin)
-        return data
+        pool_size = self._pool.shape[0]
+        n = self.data_shape[0]
+        idx = torch.randperm(pool_size, device=self._pool.device)[:n]
+        return self._pool[idx]
+        # if self.sampler is not None:
+        #     pts = self.sampler(self.data_shape[0])
+        #     data = torch.tensor(pts, dtype=torch.float32, device=self.vmin.device)
+        # else:
+        #     data = (torch.rand(self.data_shape, device=self.vmin.device) * (self.vmax - self.vmin) + self.vmin)
+        # return data
 
     def normalization(self, data: torch.Tensor) -> torch.Tensor:
         data_norm = (
@@ -91,6 +95,15 @@ class Block:
 
     def get_losses(self):
         return self.losses
+
+    def refresh_pool(self, size: int = 10000):
+        if self.sampler is not None:
+            pts = self.sampler(size)
+            self._pool = torch.tensor(
+                pts, dtype=torch.float32, device=self._pool.device
+            )
+        else:
+            self._pool = (torch.rand(self.data_shape, device=self.vmin.device) * (self.vmax - self.vmin) + self.vmin)
 
     def __init__(
             self,
@@ -180,10 +193,10 @@ class BaseDecomposition:
             return torch.maximum(1 / (1 + torch.exp(-x_clipped)), torch.tensor(1e-10))
 
         left_corner_tf = torch.tensor(
-            left_corner, dtype=torch.float32, device=self.device
+            left_corner, dtype=torch.float32, device=self.device, requires_grad=False
         )
         right_corner_tf = torch.tensor(
-            right_corner, dtype=torch.float32, device=self.device
+            right_corner, dtype=torch.float32, device=self.device, requires_grad=False
         )
         omega = torch.tensor(omega, dtype=torch.float32)
 
@@ -212,14 +225,14 @@ class BaseDecomposition:
         Precompute stacked geometry tensors for batched window evaluation.
         Call this once after decomposition is built and device is known.
         """
-        lcs = [torch.tensor(b.left_down_corner, dtype=torch.float32, device=self.device)
+        lcs = [torch.tensor(b.left_down_corner, dtype=torch.float32, device=self.device, requires_grad=False)
                for b in self.blocks]
-        rcs = [torch.tensor(b.right_up_corner, dtype=torch.float32, device=self.device)
+        rcs = [torch.tensor(b.right_up_corner, dtype=torch.float32, device=self.device, requires_grad=False)
                for b in self.blocks]
 
         self._all_lc = torch.stack(lcs)  # (N_blocks, d)
         self._all_rc = torch.stack(rcs)  # (N_blocks, d)
-        ov = torch.tensor(self.overlap, dtype=torch.float32, device=self.device)
+        ov = torch.tensor(self.overlap, dtype=torch.float32, device=self.device, requires_grad=False)
         self._all_ov = ov.unsqueeze(0).expand(len(self.blocks), -1)  # (N_blocks, d)
 
     def batched_window(self, x: torch.Tensor, omega: float = 30.0) -> torch.Tensor:
@@ -239,8 +252,7 @@ class BaseDecomposition:
             Window values, shape (N_blocks, N_pts, 1)
         """
         def sigmoid(x: torch.Tensor) -> torch.Tensor:
-            x_clipped = torch.clip(x, -50.0, 50.0)
-            return torch.maximum(1 / (1 + torch.exp(-x_clipped)), torch.tensor(1e-10))
+            return torch.clamp(torch.sigmoid(x.clamp(-50.0, 50.0)), min=1e-10)
         x_exp = x.unsqueeze(0)  # (1, N_pts, d)
         lc = self._all_lc.unsqueeze(1)  # (N_blocks, 1, d)
         rc = self._all_rc.unsqueeze(1)  # (N_blocks, 1, d)
@@ -252,3 +264,8 @@ class BaseDecomposition:
         right = sigmoid((b - x_exp) * omega)
 
         return (left * right).prod(dim=-1, keepdim=True)  # (N_blocks, N_pts, 1)
+        # log_left = -torch.nn.functional.softplus(-(x_exp - a) * omega)  # (N_blocks, N_pts, d)
+        # log_right = -torch.nn.functional.softplus(-(b - x_exp) * omega)
+        #
+        # log_w = (log_left + log_right).sum(dim=-1, keepdim=True)  # (N_blocks, N_pts, 1)
+        # return torch.exp(log_w)

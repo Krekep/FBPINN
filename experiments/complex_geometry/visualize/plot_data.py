@@ -58,7 +58,7 @@ def plot_dataset_all_points(df, title=None, draw_quiver=True):
 
 if __name__ == "__main__":
     # df1 = load_cfd_txt("../../cylinder_viscid.csv")
-    df2 = load_cfd_txt("../../../cylinder_inviscid.csv")
+    df2 = load_cfd_txt("../cylinder_inviscid.csv")
 
     # plot_dataset_all_points(df1, title="Dataset 1")
 

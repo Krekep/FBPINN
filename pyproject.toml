@@ -1,0 +1,40 @@
+[build-system]
+requires = ["setuptools>=77", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "geofbpinn"
+version = "0.1.0"
+description = "FBPINN with automatic domain decomposition"
+readme = "README.md"
+requires-python = ">=3.10"
+license = "MIT"
+authors = [
+  { name = "Pavel Alimov", email = "pavel.alimov@spbu.ru" },
+]
+keywords = ["fbpinn", "pinn"]
+classifiers = [
+  "Programming Language :: Python :: 3",
+  "License :: OSI Approved :: MIT License",
+  "Operating System :: OS Independent",
+]
+dependencies = [
+  "numpy>=2.2",
+  "matplotlib>=3.10",
+  "torch>=2.8",
+  "mlflow>=3.11",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest",
+    "pre-commit",
+    "black"
+]
+
+[tool.setuptools.packages.find]
+include = ["src*"]
+
+[project.urls]
+Homepage = "https://github.com/Krekep/FBPINN"
+Repository = "https://github.com/Krekep/FBPINN"

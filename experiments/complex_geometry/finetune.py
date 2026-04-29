@@ -1,21 +1,24 @@
 import os
+
 # os.environ['CUDA_VISIBLE_DEVICES'] = ""
 os.environ["KERAS_BACKEND"] = "torch"
 import torch
+
 # torch.cuda.is_available = lambda: False
 
 import random
 
 from experiments.complex_geometry.cylinder_geometry import prepare_geometry, scale
-from src.geometry.plot import plot_decomposition2d
-from src.geometry.polygon_decomposition import Decomposition2DPolygon
-from src.networks.schedulers.layer import BaseLayerScheduler
-from src.networks.schedulers.loss import AdaptiveLossScheduler
-from src.networks.topology.fbpinn.model import FBPINN
+from geofbpinn.geometry.plot import plot_decomposition2d
+from geofbpinn.geometry.polygon_decomposition import Decomposition2DPolygon
+from geofbpinn.networks.schedulers.layer import BaseLayerScheduler
+from geofbpinn.networks.schedulers.loss import AdaptiveLossScheduler
+from geofbpinn.networks.topology.fbpinn.model import FBPINN
 from functions.cylinder_inviscid import CylinderInviscid
-from src.networks.topology.fbpinn.trainer import train_fbpinn
-from src.networks.schedulers.lr import WarmupReduceLROnPlateau
+from geofbpinn.networks.topology.fbpinn.trainer import train_fbpinn
+from geofbpinn.networks.schedulers.lr import WarmupReduceLROnPlateau
 import mlflow
+
 print("Torch on cuda", torch.cuda.is_available())
 
 device = "cuda" if torch.cuda.is_available() else "cpu"
@@ -32,18 +35,22 @@ y_lim = 1.0
 lc = [0, 0]
 rc = [x_lim, y_lim]
 lr = 1e-4
-block_scales = {
-  "vx": 0.00137,
-  "vy": 0.00142,
-  "pressure": 1.46e-5
-}
+block_scales = {"vx": 0.00137, "vy": 0.00142, "pressure": 1.46e-5}
 block_shifts = {
-  "vx":  0.007,
-  "vy": -3.5e-6,
-  "pressure": -2.93e-6,
+    "vx": 0.007,
+    "vy": -3.5e-6,
+    "pressure": -2.93e-6,
 }
-output_scale = torch.tensor([block_scales["pressure"], block_scales["vx"], block_scales["vy"]], device=device, requires_grad=False)
-output_shift = torch.tensor([block_shifts["pressure"], block_shifts["vx"], block_shifts["vy"]], device=device, requires_grad=False)
+output_scale = torch.tensor(
+    [block_scales["pressure"], block_scales["vx"], block_scales["vy"]],
+    device=device,
+    requires_grad=False,
+)
+output_shift = torch.tensor(
+    [block_shifts["pressure"], block_shifts["vx"], block_shifts["vy"]],
+    device=device,
+    requires_grad=False,
+)
 
 dec = Decomposition2DPolygon(
     polygon_vertices=domain,
@@ -56,10 +63,16 @@ dec = Decomposition2DPolygon(
     points_per_block=points_per_block,
     eps_full=eps_full,
     holes=[hole],
-    device=device
+    device=device,
 )
 # dec.remove_redundant_blocks(samples_per_block=2000, tol=0.0001, verbose=False)
-plot_decomposition2d(dec.blocks, polygon_vertices=domain, holes=[hole], figsize=(12, 4), savepath="decomposition_airfoil.png")
+plot_decomposition2d(
+    dec.blocks,
+    polygon_vertices=domain,
+    holes=[hole],
+    figsize=(12, 4),
+    savepath="decomposition_airfoil.png",
+)
 print(f"Decomposition has {len(dec.blocks)} blocks")
 
 model_config = {
@@ -69,7 +82,7 @@ model_config = {
     "models_size": [32, 32],
     "device": device,
     "weight": torch.nn.init.xavier_uniform_,
-    "biases": torch.nn.init.zeros_
+    "biases": torch.nn.init.zeros_,
 }
 
 pde = CylinderInviscid(cylinder=hole, scale=scale, v_inf=v_inf, device=device)
@@ -80,7 +93,11 @@ mlflow.set_experiment("FBPINN Cyclinder")
 run_id = 1309
 ckpt_epoch = 99_999
 run_name = f"FBPINN_full_{run_id}"
-mlflow.start_run(run_id="8557f8ac8fad4f368e76dc102cb7deae", run_name=run_name, log_system_metrics=True)
+mlflow.start_run(
+    run_id="8557f8ac8fad4f368e76dc102cb7deae",
+    run_name=run_name,
+    log_system_metrics=True,
+)
 os.makedirs(f"./checkpoints/{run_name}", exist_ok=True)
 logdir = f"./logs/{run_name}"
 
@@ -120,7 +137,7 @@ loss_scheduler = AdaptiveLossScheduler(**loss_scheduler_config)
 
 train_config = {
     "epochs": 200000,
-    "start_epoch": ckpt_epoch+1,
+    "start_epoch": ckpt_epoch + 1,
     "patience": 4_000_000,
     "eval_interval": 100,
     "log_interval": 500,
@@ -131,11 +148,11 @@ train_config = {
 }
 scheduler = WarmupReduceLROnPlateau(
     nn.optimizer,
-    mode='min',
+    mode="min",
     factor=0.8,
     patience=50,
     warmup_epochs=0,
-    warmup_start_factor=0.1
+    warmup_start_factor=0.1,
 )
 train_fbpinn(
     **train_config,
@@ -144,7 +161,7 @@ train_fbpinn(
     val_truth=y,
     val_input=x,
     png_salt=str("123"),
-    lr_scheduler=scheduler
+    lr_scheduler=scheduler,
 )
 mlflow.end_run()
 nn.save_weights(f"./checkpoints/{run_name}/cyclinder_1_layer.weights.h5")

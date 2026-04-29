@@ -8,12 +8,12 @@ from .phys_losses import PhysLoss
 
 class LH_PDE1(PhysLoss):
     def __init__(
-            self,
-            description: str = "",
-            a: float = 1,
-            end_time: float = 1,
-            device="cpu",
-            **kwargs
+        self,
+        description: str = "",
+        a: float = 1,
+        end_time: float = 1,
+        device="cpu",
+        **kwargs
     ):
         description = "d^2u/dt^2 - 4 * d^2u/dx^2 = 0, u(0, x) = sin(pi * x) + 1/2 * sin(4 * pi * x), u_t(0, x) = 0, u(t, 0) = 0, u(t, 1) = 0"
         self.equation_class = "Hyperbolic PDE"
@@ -57,7 +57,9 @@ class LH_PDE1(PhysLoss):
 
         u_model = model(x, active_models=active_models)
 
-        u_true = torch.sin(math.pi * x_wout_t) + 1 / 2 * torch.sin(4 * math.pi * x_wout_t)
+        u_true = torch.sin(math.pi * x_wout_t) + 1 / 2 * torch.sin(
+            4 * math.pi * x_wout_t
+        )
         diff = u_true - u_model
         phys_loss = torch.mean(torch.square(diff))
 
@@ -67,7 +69,7 @@ class LH_PDE1(PhysLoss):
         """u_t(0, x) = 0"""
         x_wout_t = x_in[:, 1]
         t = torch.zeros_like(x_wout_t)
-        x = torch.stack([t, x_wout_t], dim=1)
+        x = torch.stack([t, x_wout_t], dim=1).requires_grad_(True)
 
         u_model = model(x, active_models=active_models)
         u_t = torch.autograd.grad(u_model.sum(), x, create_graph=True)[0][:, 0]

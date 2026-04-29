@@ -1,14 +1,13 @@
 import numpy as np
 import pandas as pd
 import torch
-import keras
 
-from src.geometry.geometry import sample_points_on_boundary
+from geofbpinn.geometry.geometry import sample_points_on_boundary
 from .phys_losses import PhysLoss
 
 
 def mse_zero(p):
-    return keras.ops.mean(keras.ops.square(p))
+    return torch.mean(torch.square(p))
 
 
 class CylinderInviscid(PhysLoss):
@@ -23,16 +22,16 @@ class CylinderInviscid(PhysLoss):
     """
 
     def __init__(
-            self,
-            description: str = "",
-            rho: float = 1.225,
-            scale=0.001,
-            cylinder=None,
-            v_inf: float = 0.075,  # Speed at the left (input) boundary
-            L: float = 0.1,  # Cylinder radius
-            device=None,
-            path_to_data: str = "./",
-            **kwargs
+        self,
+        description: str = "",
+        rho: float = 1.225,
+        scale=0.001,
+        cylinder=None,
+        v_inf: float = 0.075,  # Speed at the left (input) boundary
+        L: float = 0.1,  # Cylinder radius
+        device=None,
+        path_to_data: str = "./",
+        **kwargs
     ):
         description = "Steady 2D Euler: continuity + momentum, rho = const"
         super().__init__(description)
@@ -45,8 +44,8 @@ class CylinderInviscid(PhysLoss):
         self.v_inf = v_inf  # m/s
         self.L = L  # m
         self.continuity = v_inf / L  # [1/s]     ~ 0.75
-        self.momentum = v_inf ** 2 / L  # [m/s^2]   ~ 0.05625
-        self.p_scale = float(self.rho) * self.v_inf ** 2  # kg/(m * s^2)  [Pa]
+        self.momentum = v_inf**2 / L  # [m/s^2]   ~ 0.05625
+        self.p_scale = float(self.rho) * self.v_inf**2  # kg/(m * s^2)  [Pa]
 
         self.x_min = 0.0  # m
         self.x_max = 2000 * scale  # m
@@ -58,24 +57,36 @@ class CylinderInviscid(PhysLoss):
         self.cylinder_points = torch.tensor(
             sample_points_on_boundary(self.cylinder, [], 2000),
             device=device,
-            dtype=torch.float32
+            dtype=torch.float32,
         )
 
         self.full_losses = [self.phys_loss]
         self.sub_losses = [
-            (self.boundary_loss_1, [(self.x_min, self.y_min), (self.x_min, self.y_max)]),
-            (self.boundary_loss_2, [(self.x_max, self.y_min), (self.x_max, self.y_max)]),
-            (self.boundary_loss_3, [(self.x_min, self.y_max), (self.x_max, self.y_max)]),
-            (self.boundary_loss_4, [(self.x_min, self.y_min), (self.x_max, self.y_min)]),
+            (
+                self.boundary_loss_1,
+                [(self.x_min, self.y_min), (self.x_min, self.y_max)],
+            ),
+            (
+                self.boundary_loss_2,
+                [(self.x_max, self.y_min), (self.x_max, self.y_max)],
+            ),
+            (
+                self.boundary_loss_3,
+                [(self.x_min, self.y_max), (self.x_max, self.y_max)],
+            ),
+            (
+                self.boundary_loss_4,
+                [(self.x_min, self.y_min), (self.x_max, self.y_min)],
+            ),
             (self.boundary_loss_cylinder, self.cylinder),
         ]
         self.loss_func = mse_zero
 
-    def phys_loss(self, model: keras.Model, x_in, active_models, **kwargs):
+    def phys_loss(self, model: torch.nn.Module, x_in, active_models, **kwargs):
         preds = model(x_in, active_models=active_models)
-        p = keras.ops.squeeze(preds[:, 0:1], axis=-1)  # (n,)
-        vx = keras.ops.squeeze(preds[:, 1:2], axis=-1)
-        vy = keras.ops.squeeze(preds[:, 2:3], axis=-1)
+        p = preds[:, 0]  # (n,)
+        vx = preds[:, 1]
+        vy = preds[:, 2]
 
         dp = torch.autograd.grad(p.sum(), x_in, create_graph=True)[0]
         dvx = torch.autograd.grad(vx.sum(), x_in, create_graph=True)[0]
@@ -98,11 +109,11 @@ class CylinderInviscid(PhysLoss):
         phys_loss = loss_continuity + loss_mx + loss_my + loss_vorticity
         return phys_loss
 
-    def boundary_loss_1(self, model: keras.Model, x_in, active_models, **kwargs):
+    def boundary_loss_1(self, model: torch.nn.Module, x_in, active_models, **kwargs):
         """v_x(0.0, y) = 0.0075, v_y(0.0, y) = 0, p'(0.0, y) = 0"""
         y_wout_x = x_in[:, 1]
-        x = keras.ops.zeros_like(y_wout_x)
-        x = keras.ops.stack([x, y_wout_x], axis=1)
+        x = torch.zeros_like(y_wout_x)
+        x = torch.stack([x, y_wout_x], dim=1)
 
         preds = model(x, active_models=active_models)
         p = preds[:, 0:1]  # (n,1)
@@ -112,34 +123,32 @@ class CylinderInviscid(PhysLoss):
         vx = preds[:, 1:2]
         vy = preds[:, 2:3]
 
-        truth_vx = keras.ops.ones_like(vx) * self.v_inf
-        truth_vy = keras.ops.zeros_like(vy)
+        truth_vx = torch.ones_like(vx) * self.v_inf
+        truth_vy = torch.zeros_like(vy)
         b_loss = (
-                self.loss_func((truth_vx - vx) / self.v_inf) +
-                self.loss_func(vy / self.v_inf) +
-                self.loss_func(p / self.p_scale)
+            self.loss_func((truth_vx - vx) / self.v_inf)
+            + self.loss_func(vy / self.v_inf)
+            + self.loss_func(p / self.p_scale)
         )
         return b_loss
 
-    def boundary_loss_2(self, model: keras.Model, x_in, active_models, **kwargs):
+    def boundary_loss_2(self, model: torch.nn.Module, x_in, active_models, **kwargs):
         """p'(2.0, y) = 0"""
         y_wout_x = x_in[:, 1]
-        x = keras.ops.ones_like(y_wout_x) * (2000 * self.scale)
-        x = keras.ops.stack([x, y_wout_x], axis=1)
+        x = torch.ones_like(y_wout_x) * (2000 * self.scale)
+        x = torch.stack([x, y_wout_x], dim=1)
 
         preds = model(x, active_models=active_models)
-        p = keras.ops.squeeze(preds[:, 0:1], axis=-1)  # (n,)
+        p = preds[:, 0]  # (n,)
         # dp_dxy = torch.autograd.grad(p, x, torch.ones_like(p), create_graph=True)[0]
         # dp_dx, dp_dy = dp_dxy[:, 0:1], dp_dxy[:, 1:2]
-        b_loss = (
-            self.loss_func(p / self.p_scale)
-        )
+        b_loss = self.loss_func(p / self.p_scale)
         return b_loss
 
-    def boundary_loss_3(self, model: keras.Model, x_in, active_models, **kwargs):
+    def boundary_loss_3(self, model: torch.nn.Module, x_in, active_models, **kwargs):
         """(y=1.2): v_y = 0, ∂v_x/∂y = 0, ∂p'/∂y = 0"""
         x_wout_y = x_in[:, 0]
-        y = keras.ops.ones_like(x_wout_y) * (1200 * self.scale)
+        y = torch.ones_like(x_wout_y) * (1200 * self.scale)
         x = torch.stack([x_wout_y, y], dim=1)
         x.requires_grad_(True)
 
@@ -147,20 +156,26 @@ class CylinderInviscid(PhysLoss):
         vx = preds[:, 1:2]
         vy = preds[:, 2:3]
         p = preds[:, 0:1]
-        dvx_dy = torch.autograd.grad(vx, x, torch.ones_like(vx), create_graph=True)[0][:, 1:2]
-        dp_dy = torch.autograd.grad(p, x, torch.ones_like(p), create_graph=True)[0][:, 1:2]
+        dvx_dy = torch.autograd.grad(vx, x, torch.ones_like(vx), create_graph=True)[0][
+            :, 1:2
+        ]
+        dp_dy = torch.autograd.grad(p, x, torch.ones_like(p), create_graph=True)[0][
+            :, 1:2
+        ]
 
         b_loss = (
-                self.loss_func(vy / self.v_inf) +
-                self.loss_func(dvx_dy / self.continuity) +  # ∂v_x/∂y = 0
-                self.loss_func(dp_dy / (self.p_scale / self.L))  # ∂p'/∂y = 0 -- Pa/m
+            self.loss_func(vy / self.v_inf)
+            + self.loss_func(dvx_dy / self.continuity)
+            + self.loss_func(  # ∂v_x/∂y = 0
+                dp_dy / (self.p_scale / self.L)
+            )  # ∂p'/∂y = 0 -- Pa/m
         )
         return b_loss
 
-    def boundary_loss_4(self, model: keras.Model, x_in, active_models, **kwargs):
+    def boundary_loss_4(self, model: torch.nn.Module, x_in, active_models, **kwargs):
         """(y=0): v_y = 0, ∂v_x/∂y = 0, ∂p'/∂y = 0"""
         x_wout_y = x_in[:, 0]
-        y = keras.ops.zeros_like(x_wout_y)
+        y = torch.zeros_like(x_wout_y)
         x = torch.stack([x_wout_y, y], dim=1)
         x.requires_grad_(True)
 
@@ -168,17 +183,25 @@ class CylinderInviscid(PhysLoss):
         vx = preds[:, 1:2]
         vy = preds[:, 2:3]
         p = preds[:, 0:1]
-        dvx_dy = torch.autograd.grad(vx, x, torch.ones_like(vx), create_graph=True)[0][:, 1:2]
-        dp_dy = torch.autograd.grad(p, x, torch.ones_like(p), create_graph=True)[0][:, 1:2]
+        dvx_dy = torch.autograd.grad(vx, x, torch.ones_like(vx), create_graph=True)[0][
+            :, 1:2
+        ]
+        dp_dy = torch.autograd.grad(p, x, torch.ones_like(p), create_graph=True)[0][
+            :, 1:2
+        ]
 
         b_loss = (
-                self.loss_func(vy / self.v_inf) +
-                self.loss_func(dvx_dy / self.continuity) +  # ∂v_x/∂y = 0
-                self.loss_func(dp_dy / (self.p_scale / self.L))  # ∂p'/∂y = 0
+            self.loss_func(vy / self.v_inf)
+            + self.loss_func(dvx_dy / self.continuity)
+            + self.loss_func(  # ∂v_x/∂y = 0
+                dp_dy / (self.p_scale / self.L)
+            )  # ∂p'/∂y = 0
         )
         return b_loss
 
-    def boundary_loss_cylinder(self, model: keras.Model, x_in, active_models, **kwargs):
+    def boundary_loss_cylinder(
+        self, model: torch.nn.Module, x_in, active_models, **kwargs
+    ):
         """v_n = 0"""
         x_in = self.cylinder_points
 
@@ -189,7 +212,7 @@ class CylinderInviscid(PhysLoss):
         nx = (x - 300 * self.scale) / self.R  # (n,)  in meters
         ny = (y - 600 * self.scale) / self.R  # (n,)
 
-        norm = keras.ops.sqrt(nx ** 2 + ny ** 2)
+        norm = torch.sqrt(nx**2 + ny**2)
         nx = nx / norm
         ny = ny / norm
 
@@ -202,8 +225,15 @@ class CylinderInviscid(PhysLoss):
         return b_loss
 
     def _load_dataset(self, path_to_data: str):
-        df = pd.read_csv(path_to_data, header=None, sep=",", skipinitialspace=True, skiprows=1,
-                         names=["cell", "x", "y", "p", "vx", "vy"], dtype=float)
+        df = pd.read_csv(
+            path_to_data,
+            header=None,
+            sep=",",
+            skipinitialspace=True,
+            skiprows=1,
+            names=["cell", "x", "y", "p", "vx", "vy"],
+            dtype=float,
+        )
         x = df["x"].values.astype(dtype=np.float32)
         y = df["y"].values.astype(dtype=np.float32)
         p = df["p"].values.astype(dtype=np.float32)
@@ -232,6 +262,6 @@ class CylinderInviscid(PhysLoss):
         res = []
         for x, y in inp:
             res.append(self.fx[x, y])
-        res = keras.ops.convert_to_tensor(res, dtype=torch.float32)
+        res = torch.tensor(res, dtype=torch.float32)
         res.requires_grad_(False)
         return res

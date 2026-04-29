@@ -7,19 +7,19 @@ import numpy as np
 import torch
 import matplotlib
 
-matplotlib.use('Agg')
+matplotlib.use("Agg")
 from matplotlib.animation import FuncAnimation, PillowWriter
 from matplotlib import pyplot as plt
 
 os.environ["KERAS_BACKEND"] = "torch"
 
 from experiments.complex_geometry.cylinder_geometry import prepare_geometry, scale
-from src.geometry.polygon_decomposition import Decomposition2DPolygon
+from geofbpinn.geometry.polygon_decomposition import Decomposition2DPolygon
 from experiments.complex_geometry.functions.euler_empty import NoObstacleInviscid
 from experiments.complex_geometry.functions.cylinder_inviscid import CylinderInviscid
 from experiments.complex_geometry.functions.cylinder_viscid import CylinderViscid
-from src.networks.topology.fbpinn.model import FBPINN
-from src.geometry.plot import plot_decomposition2d
+from geofbpinn.networks.topology.fbpinn.model import FBPINN
+from geofbpinn.geometry.plot import plot_decomposition2d
 
 
 def scatter_grid(axes_row, xy, values_list, titles, vranges=None):
@@ -96,23 +96,21 @@ bbox_left = (-block_size[0] / 2, -block_size[1] / 2)
 bbox_right = (2000 * scale + block_size[0] / 2, 1200 * scale + block_size[1] / 2)
 # block_scales = {"vx": 0.00137, "vy": 0.00142, "pressure": 1.46e-5}
 # block_shifts = {"vx": 0.007, "vy": -3.5e-6, "pressure": -2.93e-6}
-block_scales = {
-  "vx": 0.003505,
-  "vy": 0.00129,
-  "pressure": 1.69e-05
-}
+block_scales = {"vx": 0.003505, "vy": 0.00129, "pressure": 1.69e-05}
 block_shifts = {
-  "vx":  0.0072,
-  "vy": -1.9e-06,
-  "pressure": -7.9e-06,
+    "vx": 0.0072,
+    "vy": -1.9e-06,
+    "pressure": -7.9e-06,
 }
 output_scale = torch.tensor(
     [block_scales["pressure"], block_scales["vx"], block_scales["vy"]],
-    device=device, requires_grad=False
+    device=device,
+    requires_grad=False,
 )
 output_shift = torch.tensor(
     [block_shifts["pressure"], block_shifts["vx"], block_shifts["vy"]],
-    device=device, requires_grad=False
+    device=device,
+    requires_grad=False,
 )
 
 dec = Decomposition2DPolygon(
@@ -165,17 +163,34 @@ for ckpt_num in range(0, LAST_CHECKPOINT, CHECKPOINT_STEP):
     with torch.no_grad():
         pred = nn(x_plot_dev).detach().cpu()
     rel_l1 = (
-            torch.abs(y_plot - pred)
-            / torch.maximum(torch.abs(y_plot), torch.tensor(1e-8))
+        torch.abs(y_plot - pred) / torch.maximum(torch.abs(y_plot), torch.tensor(1e-8))
     ).numpy()
     snapshots.append((ckpt_num, pred.numpy(), rel_l1))
 
-p_min = min(list(snapshots[i][1][:, 0].min() for i in range(LAST_CHECKPOINT // CHECKPOINT_STEP)) + [y_plot[:, 0].min().item()])
-p_max = max(list(snapshots[i][1][:, 0].max() for i in range(LAST_CHECKPOINT // CHECKPOINT_STEP)) + [y_plot[:, 0].max().item()])
-vx_min = min(list(snapshots[i][1][:, 1].min() for i in range(LAST_CHECKPOINT // CHECKPOINT_STEP)) + [y_plot[:, 1].min().item()])
-vx_max = max(list(snapshots[i][1][:, 1].max() for i in range(LAST_CHECKPOINT // CHECKPOINT_STEP)) + [y_plot[:, 1].max().item()])
-vy_min = min(list(snapshots[i][1][:, 2].min() for i in range(LAST_CHECKPOINT // CHECKPOINT_STEP)) + [y_plot[:, 2].min().item()])
-vy_max = max(list(snapshots[i][1][:, 2].max() for i in range(LAST_CHECKPOINT // CHECKPOINT_STEP)) + [y_plot[:, 2].max().item()])
+p_min = min(
+    list(snapshots[i][1][:, 0].min() for i in range(LAST_CHECKPOINT // CHECKPOINT_STEP))
+    + [y_plot[:, 0].min().item()]
+)
+p_max = max(
+    list(snapshots[i][1][:, 0].max() for i in range(LAST_CHECKPOINT // CHECKPOINT_STEP))
+    + [y_plot[:, 0].max().item()]
+)
+vx_min = min(
+    list(snapshots[i][1][:, 1].min() for i in range(LAST_CHECKPOINT // CHECKPOINT_STEP))
+    + [y_plot[:, 1].min().item()]
+)
+vx_max = max(
+    list(snapshots[i][1][:, 1].max() for i in range(LAST_CHECKPOINT // CHECKPOINT_STEP))
+    + [y_plot[:, 1].max().item()]
+)
+vy_min = min(
+    list(snapshots[i][1][:, 2].min() for i in range(LAST_CHECKPOINT // CHECKPOINT_STEP))
+    + [y_plot[:, 2].min().item()]
+)
+vy_max = max(
+    list(snapshots[i][1][:, 2].max() for i in range(LAST_CHECKPOINT // CHECKPOINT_STEP))
+    + [y_plot[:, 2].max().item()]
+)
 
 truth_np = y_plot.numpy()
 writer = PillowWriter(fps=GIF_FPS)
@@ -195,10 +210,30 @@ _, pred_np, rel_l1_0 = snapshots[0]
 # make_gif(fig, axes, update_err, os.path.join(OUTPUT_DIR, "errors.gif"))
 
 fig, axes = plt.subplots(3, 3, figsize=(13, 10))
-scs_p = scatter_grid(axes[0], xy, [pred_np[:, i] for i in range(3)], [f"Predicted {l}" for l in LABELS], vranges=[(p_min, p_max),(vx_min, vx_max),(vy_min, vy_max)])
-scs_t = scatter_grid(axes[1], xy, [truth_np[:, i] for i in range(3)], [f"Truth {l}" for l in LABELS], vranges=[(p_min, p_max),(vx_min, vx_max),(vy_min, vy_max)])
-scs_e = scatter_grid(axes[2], xy, [rel_l1_0[:, i] for i in range(3)], [f"Rel L1 {l}" for l in LABELS], vranges=[(0, 2),(0, 2),(0, 2)])
+scs_p = scatter_grid(
+    axes[0],
+    xy,
+    [pred_np[:, i] for i in range(3)],
+    [f"Predicted {l}" for l in LABELS],
+    vranges=[(p_min, p_max), (vx_min, vx_max), (vy_min, vy_max)],
+)
+scs_t = scatter_grid(
+    axes[1],
+    xy,
+    [truth_np[:, i] for i in range(3)],
+    [f"Truth {l}" for l in LABELS],
+    vranges=[(p_min, p_max), (vx_min, vx_max), (vy_min, vy_max)],
+)
+scs_e = scatter_grid(
+    axes[2],
+    xy,
+    [rel_l1_0[:, i] for i in range(3)],
+    [f"Rel L1 {l}" for l in LABELS],
+    vranges=[(0, 2), (0, 2), (0, 2)],
+)
 add_colorbars(fig, axes[0], scs_p)
 add_colorbars(fig, axes[1], scs_t)
 cbar = fig.colorbar(scs_e[0], ax=axes[2, :], location="right", shrink=0.8, pad=0.05)
-make_gif(fig, axes, update_combined, os.path.join(OUTPUT_DIR, f"{model_name}_training.gif"))
+make_gif(
+    fig, axes, update_combined, os.path.join(OUTPUT_DIR, f"{model_name}_training.gif")
+)

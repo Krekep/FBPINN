@@ -1,19 +1,29 @@
 import os
+
 os.environ["KERAS_BACKEND"] = "torch"
+from utils import patch_env_var
+
+patch_env_var.patch()
+
 import torch
+
+torch.backends.cuda.matmul.allow_tf32 = True
+torch.backends.cudnn.allow_tf32 = True
 
 import random
 
 from experiments.complex_geometry.cylinder_geometry import prepare_geometry, scale
-from src.geometry.plot import plot_decomposition2d
-from src.geometry.polygon_decomposition import Decomposition2DPolygon
-from src.networks.schedulers.layer import BaseLayerScheduler
-from src.networks.schedulers.loss import AdaptiveLossScheduler
-from src.networks.topology.fbpinn.model import FBPINN
+from geofbpinn.geometry.plot import plot_decomposition2d
+from geofbpinn.geometry.polygon_decomposition import Decomposition2DPolygon
+from geofbpinn.networks.schedulers.layer import BaseLayerScheduler
+from geofbpinn.networks.topology.fbpinn.lbfgs_finetune import lbfgs_finetune
+from geofbpinn.networks.schedulers.loss import AdaptiveLossScheduler, LossScheduler
+from geofbpinn.networks.topology.fbpinn.model import FBPINN
 from functions.cylinder_viscid import CylinderViscid
-from src.networks.topology.fbpinn.trainer import train_fbpinn
-from src.networks.schedulers.lr import WarmupReduceLROnPlateau
+from geofbpinn.networks.topology.fbpinn.trainer import train_fbpinn
+from geofbpinn.networks.schedulers.lr import WarmupReduceLROnPlateau
 import mlflow
+
 print("Torch on cuda", torch.cuda.is_available())
 
 device = "cuda" if torch.cuda.is_available() else "cpu"
@@ -26,18 +36,22 @@ bbox_right = (2000 * scale + block_size[0] / 2, 1200 * scale + block_size[1] / 2
 points_per_block = 100
 eps_full = 1e-3
 lr = 1e-4
-block_scales = {
-  "vx": 0.003505,
-  "vy": 0.00129,
-  "pressure": 1.69e-05
-}
+block_scales = {"vx": 0.003505, "vy": 0.00129, "pressure": 1.69e-05}
 block_shifts = {
-  "vx":  0.0072,
-  "vy": -1.9e-06,
-  "pressure": -7.9e-06,
+    "vx": 0.0072,
+    "vy": -1.9e-06,
+    "pressure": -7.9e-06,
 }
-output_scale = torch.tensor([block_scales["pressure"], block_scales["vx"], block_scales["vy"]], device=device, requires_grad=False)
-output_shift = torch.tensor([block_shifts["pressure"], block_shifts["vx"], block_shifts["vy"]], device=device, requires_grad=False)
+output_scale = torch.tensor(
+    [block_scales["pressure"], block_scales["vx"], block_scales["vy"]],
+    device=device,
+    requires_grad=False,
+)
+output_shift = torch.tensor(
+    [block_shifts["pressure"], block_shifts["vx"], block_shifts["vy"]],
+    device=device,
+    requires_grad=False,
+)
 
 dec = Decomposition2DPolygon(
     polygon_vertices=domain,
@@ -50,7 +64,7 @@ dec = Decomposition2DPolygon(
     points_per_block=points_per_block,
     eps_full=eps_full,
     holes=[hole],
-    device=device
+    device=device,
 )
 # dec.remove_redundant_blocks(samples_per_block=2000, tol=0.0001, verbose=False)
 # plot_decomposition(dec.blocks, polygon_vertices=domain, holes=[hole], figsize=(12, 4), savepath="decomposition_airfoil.png")
@@ -60,10 +74,10 @@ model_config = {
     "input_size": 2,
     "output_size": 3,
     "activation_func": ["tanh", "tanh", "linear"],
-    "models_size": [32, 32],
+    "models_size": [16, 16],
     "device": device,
     "weight": torch.nn.init.xavier_uniform_,
-    "biases": torch.nn.init.zeros_
+    "biases": torch.nn.init.zeros_,
 }
 
 pde = CylinderViscid(cylinder=hole, scale=scale, v_inf=v_inf, device=device)
@@ -121,19 +135,17 @@ loss_scheduler_config = {
     "k": 0,
     "boundary_indices": list(range(len(pde.sub_losses))),
     "loss_weights": [10, 1, 1, 1, 1, 100],
-    "threshold": 1e-3,
-    "loss_multiplier": 10.0,
 }
-loss_scheduler = AdaptiveLossScheduler(**loss_scheduler_config)
-mlflow.log_param("Loss scheduler", "AdaptiveLossScheduler")
+loss_scheduler = LossScheduler(**loss_scheduler_config)
+mlflow.log_param("Loss scheduler", "LossScheduler")
 mlflow.log_params(loss_scheduler_config)
 
 train_config = {
-    "epochs": 100000,
+    "epochs": 80000,
     "start_epoch": 0,
     "patience": 4_000_000,
     "eval_interval": 100,
-    "log_interval": 500,
+    "log_interval": 1000,
     "mode": "layer",
     "layer_scheduler": layer_scheduler,
     "loss_scheduler": loss_scheduler,
@@ -142,11 +154,11 @@ train_config = {
 mlflow.log_params(train_config)
 scheduler = WarmupReduceLROnPlateau(
     nn.optimizer,
-    mode='min',
+    mode="min",
     factor=0.8,
     patience=50,
     warmup_epochs=10,
-    warmup_start_factor=0.1
+    warmup_start_factor=0.1,
 )
 train_fbpinn(
     **train_config,
@@ -155,8 +167,35 @@ train_fbpinn(
     val_truth=y,
     val_input=x,
     png_salt=str("123"),
-    lr_scheduler=scheduler
+    lr_scheduler=scheduler,
 )
-mlflow.end_run()
 nn.save_weights(f"./checkpoints/{run_name}/cyclinder_1_layer.weights.h5")
 
+lfbgs_config = {
+    "lr": 1,
+    "max_iter": 20,
+    "max_eval": 25,
+    "tolerance_grad": 1e-7,
+    "tolerance_change": 1e-9,
+    "history_size": 100,
+    "line_search_fn": "strong_wolfe",
+}
+mlflow.log_params(lfbgs_config)
+nn.optimizer = torch.optim.LBFGS(nn.parameters(), **lfbgs_config)
+finetune_config = {
+    "epochs_lbfgs": 500,
+}
+mlflow.log_params(finetune_config)
+lbfgs_finetune(
+    fbpinn=nn,
+    start_epoch=train_config["epochs"],
+    epochs=train_config["epochs"] + finetune_config["epochs_lbfgs"],
+    val_input=x,
+    val_truth=y,
+    layer_scheduler=layer_scheduler,
+    loss_scheduler=loss_scheduler,
+    path_to_ckpt=train_config["path_to_ckpt"],
+)
+
+
+mlflow.end_run()

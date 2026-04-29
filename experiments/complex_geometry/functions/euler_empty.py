@@ -23,13 +23,13 @@ class NoObstacleInviscid(PhysLoss):
     """
 
     def __init__(
-            self,
-            scale: float = 0.001,
-            rho: float = 1.225,
-            v_inf: float = 0.0075,
-            L: float = 0.1,
-            device=None,
-            **kwargs
+        self,
+        scale: float = 0.001,
+        rho: float = 1.225,
+        v_inf: float = 0.0075,
+        L: float = 0.1,
+        device=None,
+        **kwargs
     ):
         super().__init__("Steady 2D Euler: no obstacle, uniform flow")
         self.equation_class = "Euler (inviscid) 2D — no obstacle"
@@ -42,8 +42,8 @@ class NoObstacleInviscid(PhysLoss):
         self.device = device
 
         self.continuity = v_inf / L
-        self.momentum = v_inf ** 2 / L
-        self.p_scale = float(self.rho) * v_inf ** 2
+        self.momentum = v_inf**2 / L
+        self.p_scale = float(self.rho) * v_inf**2
 
         self.x_min = 0.0
         self.x_max = 2000 * scale
@@ -53,10 +53,22 @@ class NoObstacleInviscid(PhysLoss):
         self._build_val_input(nx=100, ny=60)
 
         self.sub_losses = [
-            (self.boundary_loss_1, [(self.x_min, self.y_min), (self.x_min, self.y_max)]),
-            (self.boundary_loss_2, [(self.x_max, self.y_min), (self.x_max, self.y_max)]),
-            (self.boundary_loss_3, [(self.x_min, self.y_max), (self.x_max, self.y_max)]),
-            (self.boundary_loss_4, [(self.x_min, self.y_min), (self.x_max, self.y_min)]),
+            (
+                self.boundary_loss_1,
+                [(self.x_min, self.y_min), (self.x_min, self.y_max)],
+            ),
+            (
+                self.boundary_loss_2,
+                [(self.x_max, self.y_min), (self.x_max, self.y_max)],
+            ),
+            (
+                self.boundary_loss_3,
+                [(self.x_min, self.y_max), (self.x_max, self.y_max)],
+            ),
+            (
+                self.boundary_loss_4,
+                [(self.x_min, self.y_min), (self.x_max, self.y_min)],
+            ),
         ]
         self.loss_func = mse_zero
 
@@ -80,10 +92,10 @@ class NoObstacleInviscid(PhysLoss):
         mom_y = vx * dvy_dx + vy * dvy_dy + (1.0 / self.rho) * dp_dy
 
         return (
-                self.loss_func(continuity / self.continuity) +
-                self.loss_func(vorticity / self.continuity) +
-                self.loss_func(mom_x / self.momentum) +
-                self.loss_func(mom_y / self.momentum)
+            self.loss_func(continuity / self.continuity)
+            + self.loss_func(vorticity / self.continuity)
+            + self.loss_func(mom_x / self.momentum)
+            + self.loss_func(mom_y / self.momentum)
         )
 
     def boundary_loss_1(self, model, x_in, active_models, **kwargs):
@@ -98,9 +110,9 @@ class NoObstacleInviscid(PhysLoss):
         vy = preds[:, 2:3]
 
         return (
-                self.loss_func((vx - self.v_inf) / self.v_inf) +
-                self.loss_func(vy / self.v_inf) +
-                self.loss_func(p / self.p_scale)
+            self.loss_func((vx - self.v_inf) / self.v_inf)
+            + self.loss_func(vy / self.v_inf)
+            + self.loss_func(p / self.p_scale)
         )
 
     def boundary_loss_2(self, model, x_in, active_models, **kwargs):
@@ -126,13 +138,17 @@ class NoObstacleInviscid(PhysLoss):
         vy = preds[:, 2:3]
         p = preds[:, 0:1]
 
-        dvx_dy = torch.autograd.grad(vx, pts, torch.ones_like(vx), create_graph=True)[0][:, 1:2]
-        dp_dy = torch.autograd.grad(p, pts, torch.ones_like(p), create_graph=True)[0][:, 1:2]
+        dvx_dy = torch.autograd.grad(vx, pts, torch.ones_like(vx), create_graph=True)[
+            0
+        ][:, 1:2]
+        dp_dy = torch.autograd.grad(p, pts, torch.ones_like(p), create_graph=True)[0][
+            :, 1:2
+        ]
 
         return (
-                self.loss_func(vy / self.v_inf) +
-                self.loss_func(dvx_dy / self.continuity) +
-                self.loss_func(dp_dy / (self.p_scale / self.L))
+            self.loss_func(vy / self.v_inf)
+            + self.loss_func(dvx_dy / self.continuity)
+            + self.loss_func(dp_dy / (self.p_scale / self.L))
         )
 
     def boundary_loss_4(self, model, x_in, active_models, **kwargs):
@@ -147,13 +163,17 @@ class NoObstacleInviscid(PhysLoss):
         vy = preds[:, 2:3]
         p = preds[:, 0:1]
 
-        dvx_dy = torch.autograd.grad(vx, pts, torch.ones_like(vx), create_graph=True)[0][:, 1:2]
-        dp_dy = torch.autograd.grad(p, pts, torch.ones_like(p), create_graph=True)[0][:, 1:2]
+        dvx_dy = torch.autograd.grad(vx, pts, torch.ones_like(vx), create_graph=True)[
+            0
+        ][:, 1:2]
+        dp_dy = torch.autograd.grad(p, pts, torch.ones_like(p), create_graph=True)[0][
+            :, 1:2
+        ]
 
         return (
-                self.loss_func(vy / self.v_inf) +
-                self.loss_func(dvx_dy / self.continuity) +
-                self.loss_func(dp_dy / (self.p_scale / self.L))
+            self.loss_func(vy / self.v_inf)
+            + self.loss_func(dvx_dy / self.continuity)
+            + self.loss_func(dp_dy / (self.p_scale / self.L))
         )
 
     def _build_val_input(self, nx: int, ny: int):

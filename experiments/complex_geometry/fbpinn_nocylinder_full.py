@@ -1,21 +1,24 @@
 import os
+
 # os.environ['CUDA_VISIBLE_DEVICES'] = ""
 os.environ["KERAS_BACKEND"] = "torch"
 import torch
+
 # torch.cuda.is_available = lambda: False
 
 import random
 from matplotlib import pyplot as plt
 
 from experiments.complex_geometry.cylinder_geometry import prepare_geometry, scale
-from src.geometry.polygon_decomposition import Decomposition2DPolygon
-from src.networks.schedulers.layer import BaseLayerScheduler
-from src.networks.schedulers.loss import AdaptiveLossScheduler
-from src.networks.topology.fbpinn.model import FBPINN
+from geofbpinn.geometry.polygon_decomposition import Decomposition2DPolygon
+from geofbpinn.networks.schedulers.layer import BaseLayerScheduler
+from geofbpinn.networks.schedulers.loss import AdaptiveLossScheduler
+from geofbpinn.networks.topology.fbpinn.model import FBPINN
 from functions.euler_empty import NoObstacleInviscid
-from src.networks.topology.fbpinn.trainer import train_fbpinn
-from src.networks.schedulers.lr import WarmupReduceLROnPlateau
+from geofbpinn.networks.topology.fbpinn.trainer import train_fbpinn
+from geofbpinn.networks.schedulers.lr import WarmupReduceLROnPlateau
 import mlflow
+
 print("Torch on cuda", torch.cuda.is_available())
 
 device = "cuda" if torch.cuda.is_available() else "cpu"
@@ -32,18 +35,22 @@ y_lim = 1.0
 lc = [0, 0]
 rc = [x_lim, y_lim]
 lr = 1e-4
-block_scales = {
-  "vx": 0.00137,
-  "vy": 0.00142,
-  "pressure": 1.46e-5
-}
+block_scales = {"vx": 0.00137, "vy": 0.00142, "pressure": 1.46e-5}
 block_shifts = {
-  "vx":  0.007,
-  "vy": -3.5e-6,
-  "pressure": -2.93e-6,
+    "vx": 0.007,
+    "vy": -3.5e-6,
+    "pressure": -2.93e-6,
 }
-output_scale = torch.tensor([block_scales["pressure"], block_scales["vx"], block_scales["vy"]], device=device, requires_grad=False)
-output_shift = torch.tensor([block_shifts["pressure"], block_shifts["vx"], block_shifts["vy"]], device=device, requires_grad=False)
+output_scale = torch.tensor(
+    [block_scales["pressure"], block_scales["vx"], block_scales["vy"]],
+    device=device,
+    requires_grad=False,
+)
+output_shift = torch.tensor(
+    [block_shifts["pressure"], block_shifts["vx"], block_shifts["vy"]],
+    device=device,
+    requires_grad=False,
+)
 
 dec = Decomposition2DPolygon(
     polygon_vertices=domain,
@@ -55,7 +62,7 @@ dec = Decomposition2DPolygon(
     overlap=overlap,
     points_per_block=points_per_block,
     eps_full=eps_full,
-    device=device
+    device=device,
 )
 # dec.remove_redundant_blocks(samples_per_block=2000, tol=0.0001, verbose=False)
 # plot_decomposition(dec.blocks, polygon_vertices=domain, holes=[hole], figsize=(12, 4), savepath="decomposition_airfoil.png")
@@ -68,7 +75,7 @@ model_config = {
     "models_size": [16, 16],
     "device": device,
     "weight": torch.nn.init.xavier_uniform_,
-    "biases": torch.nn.init.zeros_
+    "biases": torch.nn.init.zeros_,
 }
 
 pde = NoObstacleInviscid(scale=scale, v_inf=v_inf, device=device)
@@ -148,11 +155,11 @@ train_config = {
 mlflow.log_params(train_config)
 scheduler = WarmupReduceLROnPlateau(
     nn.optimizer,
-    mode='min',
+    mode="min",
     factor=0.8,
     patience=100000,
     warmup_epochs=10,
-    warmup_start_factor=0.1
+    warmup_start_factor=0.1,
 )
 train_fbpinn(
     **train_config,
@@ -162,7 +169,7 @@ train_fbpinn(
     val_truth=y,
     val_input=x,
     png_salt=str("123"),
-    lr_scheduler=scheduler
+    lr_scheduler=scheduler,
 )
 mlflow.end_run()
 nn.save_weights(f"./checkpoints/{run_name}/cyclinder_1_layer.weights.h5")
@@ -173,49 +180,37 @@ fig, axes = plt.subplots(nrows=2, ncols=3)
 predicted = nn(x_plot).detach().cpu()
 x_plot = x_plot.detach().cpu()
 y = y[:, :].detach().cpu()
-axes[0, 0].scatter(
-    x_plot[:, 0:1], x_plot[:, 1:2], c=predicted[:, 0], cmap='viridis'
-)
+axes[0, 0].scatter(x_plot[:, 0:1], x_plot[:, 1:2], c=predicted[:, 0], cmap="viridis")
 axes[0, 0].set_xlabel("x")
 axes[0, 0].set_ylabel("y")
 axes[0, 0].grid()
 axes[0, 0].set_title("Predicted pressure")
 
-axes[0, 1].scatter(
-    x_plot[:, 0:1], x_plot[:, 1:2], c=predicted[:, 1], cmap='viridis'
-)
+axes[0, 1].scatter(x_plot[:, 0:1], x_plot[:, 1:2], c=predicted[:, 1], cmap="viridis")
 axes[0, 1].set_xlabel("x")
 axes[0, 1].set_ylabel("y")
 axes[0, 1].grid()
 axes[0, 1].set_title("Predicted vx")
 
-axes[0, 2].scatter(
-    x_plot[:, 0:1], x_plot[:, 1:2], c=predicted[:, 2], cmap='viridis'
-)
+axes[0, 2].scatter(x_plot[:, 0:1], x_plot[:, 1:2], c=predicted[:, 2], cmap="viridis")
 axes[0, 2].set_xlabel("x")
 axes[0, 2].set_ylabel("y")
 axes[0, 2].grid()
 axes[0, 2].set_title("Predicted vy")
 
-axes[1, 0].scatter(
-    x_plot[:, 0:1], x_plot[:, 1:2], c=y[:, 0], cmap='viridis'
-)
+axes[1, 0].scatter(x_plot[:, 0:1], x_plot[:, 1:2], c=y[:, 0], cmap="viridis")
 axes[1, 0].set_xlabel("x")
 axes[1, 0].set_ylabel("y")
 axes[1, 0].grid()
 axes[1, 0].set_title("Truth pressure")
 
-axes[1, 1].scatter(
-    x_plot[:, 0:1], x_plot[:, 1:2], c=y[:, 1], cmap='viridis'
-)
+axes[1, 1].scatter(x_plot[:, 0:1], x_plot[:, 1:2], c=y[:, 1], cmap="viridis")
 axes[1, 1].set_xlabel("x")
 axes[1, 1].set_ylabel("y")
 axes[1, 1].grid()
 axes[1, 1].set_title("Truth vx")
 
-axes[1, 2].scatter(
-    x_plot[:, 0:1], x_plot[:, 1:2], c=y[:, 2], cmap='viridis'
-)
+axes[1, 2].scatter(x_plot[:, 0:1], x_plot[:, 1:2], c=y[:, 2], cmap="viridis")
 axes[1, 2].set_xlabel("x")
 axes[1, 2].set_ylabel("y")
 axes[1, 2].grid()
@@ -223,4 +218,3 @@ axes[1, 2].set_title("Truth vy")
 plt.savefig(f"Solution{run_name}", dpi=400)
 plt.savefig(f"Solution{run_name}.eps", dpi=400, format="eps")
 plt.show()
-

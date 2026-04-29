@@ -7,11 +7,14 @@ from matplotlib import pyplot as plt
 
 import mlflow
 
-from src.networks.topology.fbpinn.trainer import train_fbpinn
-from src.geometry import RectangleDomain, DecompositionND
-from src.networks.topology.fbpinn.model import FBPINN
-from src.networks.schedulers.loss import LossScheduler, AdaptiveLossScheduler
-from src.networks.schedulers.layer import SequenceBlockScheduler, BaseLayerScheduler
+from geofbpinn.networks.topology.fbpinn.trainer import train_fbpinn
+from geofbpinn.geometry import RectangleDomain, DecompositionND
+from geofbpinn.networks.topology.fbpinn.model import FBPINN
+from geofbpinn.networks.schedulers.loss import LossScheduler, AdaptiveLossScheduler
+from geofbpinn.networks.schedulers.layer import (
+    SequenceBlockScheduler,
+    BaseLayerScheduler,
+)
 from experiments.train_strategies.Functions.LH_PDE1 import LH_PDE1
 
 device = "cuda" if torch.cuda.is_available() else "cpu"
@@ -40,12 +43,8 @@ boundary_lc = [domain_lc[0] - block_size[0] / 2, domain_lc[1] - block_size[1] / 
 boundary_rc = [domain_rc[0] + block_size[0] / 2, domain_rc[1] + block_size[1] / 2]
 domain = RectangleDomain(left_corner=domain_lc, right_corner=domain_rc)
 points_per_block = 1000
-block_scales = {
-  "y": 1
-}
-block_shifts = {
-  "y": 0
-}
+block_scales = {"y": 1}
+block_shifts = {"y": 0}
 output_scale = torch.tensor([block_scales["y"]], device=device, requires_grad=False)
 output_shift = torch.tensor([block_shifts["y"]], device=device, requires_grad=False)
 
@@ -59,7 +58,7 @@ dec = DecompositionND(
     block_scales=output_scale,
     block_shift=output_shift,
     points_per_block=points_per_block,
-    device=device
+    device=device,
 )
 
 model_config = {
@@ -69,7 +68,7 @@ model_config = {
     "models_size": [32, 32],
     "device": device,
     "weight": torch.nn.init.xavier_uniform_,
-    "biases": torch.nn.init.zeros_
+    "biases": torch.nn.init.zeros_,
 }
 mlflow.log_param("left_bound", boundary_lc)
 mlflow.log_param("right_bound", boundary_rc)
@@ -135,7 +134,7 @@ train_fbpinn(
     val_truth=y,
     val_input=x,
     png_salt=str("123"),
-    lr_scheduler=None
+    lr_scheduler=None,
 )
 loss_after_train = nn.evaluate(x, y, verbose=0)
 print("Before", loss_before_train)
@@ -145,12 +144,7 @@ mlflow.log_metric("Loss after training", loss_after_train)
 mlflow.end_run()
 nn.save_weights(f"lh_pde_2_dep_full_{run_id}.weights.h5")
 
-x_plot = torch.linspace(
-    domain_lc[1],
-    domain_rc[1],
-    steps=10000,
-    device=device
-)
+x_plot = torch.linspace(domain_lc[1], domain_rc[1], steps=10000, device=device)
 for t_py in [i / 10 for i in range(0, int(10 * t_lim + 1))]:
     fig, axes = plt.subplots(nrows=2, ncols=1, figsize=(15, 15))
     t = torch.ones_like(x_plot, device=device) * t_py
@@ -163,9 +157,7 @@ for t_py in [i / 10 for i in range(0, int(10 * t_lim + 1))]:
     x_norm = 2.0 * (x_exp - vmins) / (vmaxs - vmins) - 1.0
 
     with torch.no_grad():
-        outputs = nn._manual_forward(
-            nn.stacked_w, nn.stacked_b, x_norm
-        )
+        outputs = nn._manual_forward(nn.stacked_w, nn.stacked_b, x_norm)
 
         scales = nn.all_scales.unsqueeze(1)
         shifts = nn.all_shifts.unsqueeze(1)

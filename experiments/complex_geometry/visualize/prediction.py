@@ -4,19 +4,22 @@ import random
 import numpy as np
 import torch
 import matplotlib.pyplot as plt
+
 os.environ["KERAS_BACKEND"] = "torch"
 
 from experiments.complex_geometry.cylinder_geometry import prepare_geometry, scale
-from src.geometry.polygon_decomposition import Decomposition2DPolygon
+from geofbpinn.geometry.polygon_decomposition import Decomposition2DPolygon
 from experiments.complex_geometry.functions.cylinder_inviscid import CylinderInviscid
 from experiments.complex_geometry.functions.cylinder_viscid import CylinderViscid
-from src.networks.topology.fbpinn.model import FBPINN
+from geofbpinn.networks.topology.fbpinn.model import FBPINN
 
 
 def scatter_grid(axes_row, xy, values_list, titles, vranges):
     scs = []
     for ax, val, title, (vmin, vmax) in zip(axes_row, values_list, titles, vranges):
-        sc = ax.scatter(xy[:, 0], xy[:, 1], c=val, cmap="viridis", s=10, vmin=vmin, vmax=vmax)
+        sc = ax.scatter(
+            xy[:, 0], xy[:, 1], c=val, cmap="viridis", s=10, vmin=vmin, vmax=vmax
+        )
         ax.set_title(title)
         ax.set_xlabel("x")
         ax.set_ylabel("y")
@@ -40,23 +43,21 @@ block_size = (0.25, 0.25)
 overlap = (0.08, 0.08)
 bbox_left = (-block_size[0] / 2, -block_size[1] / 2)
 bbox_right = (2000 * scale + block_size[0] / 2, 1200 * scale + block_size[1] / 2)
-block_scales = {
-  "vx": 0.003505,
-  "vy": 0.00129,
-  "pressure": 1.69e-05
-}
+block_scales = {"vx": 0.003505, "vy": 0.00129, "pressure": 1.69e-05}
 block_shifts = {
-  "vx":  0.0072,
-  "vy": -1.9e-06,
-  "pressure": -7.9e-06,
+    "vx": 0.0072,
+    "vy": -1.9e-06,
+    "pressure": -7.9e-06,
 }
 output_scale = torch.tensor(
     [block_scales["pressure"], block_scales["vx"], block_scales["vy"]],
-    device=device, requires_grad=False
+    device=device,
+    requires_grad=False,
 )
 output_shift = torch.tensor(
     [block_shifts["pressure"], block_shifts["vx"], block_shifts["vy"]],
-    device=device, requires_grad=False
+    device=device,
+    requires_grad=False,
 )
 
 dec = Decomposition2DPolygon(
@@ -104,9 +105,10 @@ x = torch.tensor(x_np, device=device)
 with torch.no_grad():
     pred = nn(x)
 rel_l1 = (
-    torch.abs(y - pred)
-    / torch.maximum(torch.abs(y), torch.tensor(1e-8))
-).cpu().numpy()
+    (torch.abs(y - pred) / torch.maximum(torch.abs(y), torch.tensor(1e-8)))
+    .cpu()
+    .numpy()
+)
 pred_np = pred.cpu().numpy()
 y_np = y.cpu().numpy()
 
@@ -121,48 +123,102 @@ for i in range(3):
     vmax_list.append(vmax)
 
 fields = ["pressure", "vx", "vy"]
-scs_pred1 = axes[0, 0].scatter(x_np[:, 0], x_np[:, 1], c=pred_np[:, 0], cmap="viridis", s=10, vmin=vmin_list[0], vmax=vmax_list[0])
+scs_pred1 = axes[0, 0].scatter(
+    x_np[:, 0],
+    x_np[:, 1],
+    c=pred_np[:, 0],
+    cmap="viridis",
+    s=10,
+    vmin=vmin_list[0],
+    vmax=vmax_list[0],
+)
 axes[0, 0].set_title(f"Predicted {fields[0]}")
 axes[0, 0].set_xlabel("x")
 axes[0, 0].set_ylabel("y")
 axes[0, 0].grid(True, linewidth=0.3)
-scs_pred2 = axes[0, 1].scatter(x_np[:, 0], x_np[:, 1], c=pred_np[:, 1], cmap="viridis", s=10, vmin=vmin_list[1], vmax=vmax_list[1])
+scs_pred2 = axes[0, 1].scatter(
+    x_np[:, 0],
+    x_np[:, 1],
+    c=pred_np[:, 1],
+    cmap="viridis",
+    s=10,
+    vmin=vmin_list[1],
+    vmax=vmax_list[1],
+)
 axes[0, 1].set_title(f"Predicted {fields[1]}")
 axes[0, 1].set_xlabel("x")
 axes[0, 1].set_ylabel("y")
 axes[0, 1].grid(True, linewidth=0.3)
-scs_pred3 = axes[0, 2].scatter(x_np[:, 0], x_np[:, 1], c=pred_np[:, 2], cmap="viridis", s=10, vmin=vmin_list[2], vmax=vmax_list[2])
+scs_pred3 = axes[0, 2].scatter(
+    x_np[:, 0],
+    x_np[:, 1],
+    c=pred_np[:, 2],
+    cmap="viridis",
+    s=10,
+    vmin=vmin_list[2],
+    vmax=vmax_list[2],
+)
 axes[0, 2].set_title(f"Predicted {fields[2]}")
 axes[0, 2].set_xlabel("x")
 axes[0, 2].set_ylabel("y")
 axes[0, 2].grid(True, linewidth=0.3)
-scs_true1 = axes[1, 0].scatter(x_np[:, 0], x_np[:, 1], c=y_np[:, 0], cmap="viridis", s=10, vmin=vmin_list[0], vmax=vmax_list[0])
+scs_true1 = axes[1, 0].scatter(
+    x_np[:, 0],
+    x_np[:, 1],
+    c=y_np[:, 0],
+    cmap="viridis",
+    s=10,
+    vmin=vmin_list[0],
+    vmax=vmax_list[0],
+)
 axes[1, 0].set_title(f"True {fields[0]}")
 axes[1, 0].set_xlabel("x")
 axes[1, 0].set_ylabel("y")
 axes[1, 0].grid(True, linewidth=0.3)
-scs_true2 = axes[1, 1].scatter(x_np[:, 0], x_np[:, 1], c=y_np[:, 1], cmap="viridis", s=10, vmin=vmin_list[1], vmax=vmax_list[1])
+scs_true2 = axes[1, 1].scatter(
+    x_np[:, 0],
+    x_np[:, 1],
+    c=y_np[:, 1],
+    cmap="viridis",
+    s=10,
+    vmin=vmin_list[1],
+    vmax=vmax_list[1],
+)
 axes[1, 1].set_title(f"True {fields[1]}")
 axes[1, 1].set_xlabel("x")
 axes[1, 1].set_ylabel("y")
 axes[1, 1].grid(True, linewidth=0.3)
-scs_true3 = axes[1, 2].scatter(x_np[:, 0], x_np[:, 1], c=y_np[:, 2], cmap="viridis", s=10, vmin=vmin_list[2], vmax=vmax_list[2])
+scs_true3 = axes[1, 2].scatter(
+    x_np[:, 0],
+    x_np[:, 1],
+    c=y_np[:, 2],
+    cmap="viridis",
+    s=10,
+    vmin=vmin_list[2],
+    vmax=vmax_list[2],
+)
 axes[1, 2].set_title(f"True {fields[2]}")
 axes[1, 2].set_xlabel("x")
 axes[1, 2].set_ylabel("y")
 axes[1, 2].grid(True, linewidth=0.3)
 
-scs_err = axes[2, 0].scatter(x_np[:, 0], x_np[:, 1], c=rel_l1[:, 0], cmap="viridis", s=10, vmin=0, vmax=2)
+scs_err = axes[2, 0].scatter(
+    x_np[:, 0], x_np[:, 1], c=rel_l1[:, 0], cmap="viridis", s=10, vmin=0, vmax=2
+)
 axes[2, 0].set_title(f"Error {fields[0]}")
 axes[2, 0].set_xlabel("x")
 axes[2, 0].set_ylabel("y")
 axes[2, 0].grid(True, linewidth=0.3)
-axes[2, 1].scatter(x_np[:, 0], x_np[:, 1], c=rel_l1[:, 1], cmap="viridis", s=10, vmin=0, vmax=2)
+axes[2, 1].scatter(
+    x_np[:, 0], x_np[:, 1], c=rel_l1[:, 1], cmap="viridis", s=10, vmin=0, vmax=2
+)
 axes[2, 1].set_title(f"Error {fields[1]}")
 axes[2, 1].set_xlabel("x")
 axes[2, 1].set_ylabel("y")
 axes[2, 1].grid(True, linewidth=0.3)
-axes[2, 2].scatter(x_np[:, 0], x_np[:, 1], c=rel_l1[:, 2], cmap="viridis", s=10, vmin=0, vmax=2)
+axes[2, 2].scatter(
+    x_np[:, 0], x_np[:, 1], c=rel_l1[:, 2], cmap="viridis", s=10, vmin=0, vmax=2
+)
 axes[2, 2].set_title(f"Error {fields[2]}")
 axes[2, 2].set_xlabel("x")
 axes[2, 2].set_ylabel("y")

@@ -288,8 +288,6 @@ class Decomposition2DPolygon(BaseDecomposition):
                 & (bboxes[:, 1] < yi1)
             )
             potential = np.where(overlap_mask)[0].tolist()
-            if not potential:
-                continue
 
             pts = sample_points_in_polygon_with_holes(
                 b.clipped_polygon, b.clipped_holes, samples_per_block
@@ -297,7 +295,8 @@ class Decomposition2DPolygon(BaseDecomposition):
             if pts is None or pts.shape[0] == 0:
                 to_keep[idx] = False
                 continue
-
+            if not potential:
+                continue
             px, py = pts[:, 0], pts[:, 1]
 
             covered = np.zeros(len(pts), dtype=bool)

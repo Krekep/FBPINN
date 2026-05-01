@@ -137,14 +137,14 @@ def plot_decomposition2d(
     legend_elems = [
         Line2D([0], [0], color="k", lw=1.2, label="outer contour"),
         Line2D([0], [0], color="r", lw=1.2, label="hole (wing)", linestyle="-"),
-        Rectangle(
-            (0, 0),
-            1,
-            1,
-            facecolor=interior_face,
-            edgecolor=rect_edge_color,
-            label="interior block",
-        ),
+        # Rectangle(
+        #     (0, 0),
+        #     1,
+        #     1,
+        #     facecolor=interior_face,
+        #     edgecolor=rect_edge_color,
+        #     label="interior block",
+        # ),
         Rectangle(
             (0, 0),
             1,

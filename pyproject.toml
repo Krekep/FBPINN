@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "geofbpinn"
-version = "0.1.0"
+version = "0.1.1"
 description = "FBPINN with automatic domain decomposition"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -28,7 +28,8 @@ dev = [
 ]
 
 [tool.setuptools.packages.find]
-include = ["src*"]
+where = ["."]
+include = ["geofbpinn*"]
 
 [project.urls]
 Homepage = "https://github.com/Krekep/FBPINN"

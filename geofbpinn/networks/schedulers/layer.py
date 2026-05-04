@@ -230,3 +230,24 @@ class GrowingColumnScheduler(BaseLayerScheduler):
             self.n, self.current_right_bound + self.blocks_per_axis[self.current_col]
         )
         self.current_indices = list(range(0, self.current_right_bound))
+
+
+class TwoStepLayerScheduler(BaseLayerScheduler):
+    def __init__(self, n, first, second, step):
+        super().__init__(n)
+        self.k = step
+        self.first = first
+        self.second = second
+        self.curr_step = 0
+        self.current_indices = list(range(first[0], first[1]))
+        self.frozen_indices = []
+
+    def step(self):
+        self.curr_step += 1
+        if self.k == self.curr_step:
+            curr_indices = list(range(self.second[0], self.second[1]))
+            self.frozen_indices = list(set(self.current_indices) & set(curr_indices))
+            self.current_indices = curr_indices
+
+    def get_frozen_indices(self) -> list[int]:
+        return self.frozen_indices

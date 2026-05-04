@@ -405,6 +405,14 @@ class FBPINN(torch.nn.Module):
         path: str
             File path
         """
+        n_hidden = len(self.networks[0].blocks)
+        for layer_idx in range(n_hidden):
+            for i, (nn, _) in enumerate(self.blocks):
+                nn.blocks[layer_idx].w.data = self.stacked_w[layer_idx][i].data
+                nn.blocks[layer_idx].b.data = self.stacked_b[layer_idx][i].data
+        for i, (nn, _) in enumerate(self.blocks):
+            nn.out_layer.w.data = self.stacked_w[-1][i].data
+            nn.out_layer.b.data = self.stacked_b[-1][i].data
         self._scatter_gradients()
         torch.save(self.state_dict(), path)
 

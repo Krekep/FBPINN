@@ -1,7 +1,3 @@
-import os
-
-os.environ["KERAS_BACKEND"] = "torch"
-
 from math import sin, cos, pi
 
 from geofbpinn.geometry.plot import plot_decomposition2d

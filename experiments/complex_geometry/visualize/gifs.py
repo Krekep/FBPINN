@@ -1,8 +1,5 @@
 import os
-import re
 import random
-import glob
-
 import numpy as np
 import torch
 import matplotlib
@@ -10,8 +7,6 @@ import matplotlib
 matplotlib.use("Agg")
 from matplotlib.animation import FuncAnimation, PillowWriter
 from matplotlib import pyplot as plt
-
-os.environ["KERAS_BACKEND"] = "torch"
 
 from experiments.complex_geometry.cylinder_geometry import prepare_geometry, scale
 from geofbpinn.geometry.polygon_decomposition import Decomposition2DPolygon
@@ -75,12 +70,12 @@ def update_combined(frame):
         scs_e[i].set_array(rel_l1[:, i])
 
 
-model_name = "FBPINN_full_5686"
+model_name = "FBPINN_full_4683"
 torch.manual_seed(42)
 random.seed(42)
 np.random.seed(42)
 CHECKPOINT_DIR = "../checkpoints" + f"/{model_name}"
-LAST_CHECKPOINT = 100_000
+LAST_CHECKPOINT = 200_000
 CHECKPOINT_STEP = 5000  # use every k-th checkpoint (sorted by step number)
 POINT_STEP = 10  # subsample 1-in-N points for plotting
 GIF_FPS = 2
@@ -90,10 +85,10 @@ os.makedirs(OUTPUT_DIR, exist_ok=True)
 device = "cuda" if torch.cuda.is_available() else "cpu"
 print("Torch on cuda:", torch.cuda.is_available())
 domain, hole = prepare_geometry()
-block_size = (0.25, 0.25)
-overlap = (0.08, 0.08)
-bbox_left = (-block_size[0] / 2, -block_size[1] / 2)
-bbox_right = (2000 * scale + block_size[0] / 2, 1200 * scale + block_size[1] / 2)
+block_size = (0.2, 0.2)
+overlap = (0.07, 0.07)
+bbox_left = (-block_size[0] / 4, -block_size[1] / 4)
+bbox_right = (2000 * scale + block_size[0] / 4, 1200 * scale + block_size[1] / 4)
 # block_scales = {"vx": 0.00137, "vy": 0.00142, "pressure": 1.46e-5}
 # block_shifts = {"vx": 0.007, "vy": -3.5e-6, "pressure": -2.93e-6}
 block_scales = {"vx": 0.003505, "vy": 0.00129, "pressure": 1.69e-05}
@@ -121,20 +116,20 @@ dec = Decomposition2DPolygon(
     block_shift=output_shift,
     block_size=block_size,
     overlap=overlap,
-    points_per_block=200,
+    points_per_block=10,
     eps_full=1e-3,
     holes=[hole],
     device=device,
 )
-# dec.remove_redundant_blocks(samples_per_block=4000, tol=0.001, verbose=False)
+dec.remove_redundant_blocks(samples_per_block=4000, tol=0.001, verbose=False)
 plot_decomposition2d(dec.blocks, polygon_vertices=domain, holes=[hole], figsize=(12, 4))
 print(f"Decomposition has {len(dec.blocks)} blocks")
 
 model_config = {
     "input_size": 2,
     "output_size": 3,
-    "activation_func": ["tanh", "tanh", "tanh", "linear"],
-    "models_size": [16, 16, 16],
+    "activation_func": ["tanh", "tanh", "linear"],
+    "models_size": [16, 16],
     "device": device,
     "weight": torch.nn.init.xavier_uniform_,
     "biases": torch.nn.init.zeros_,

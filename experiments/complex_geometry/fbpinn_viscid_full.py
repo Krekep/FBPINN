@@ -1,12 +1,8 @@
 import os
-
-os.environ["KERAS_BACKEND"] = "torch"
+import torch
 from utils import patch_env_var
 
 patch_env_var.patch()
-
-import torch
-
 torch.backends.cuda.matmul.allow_tf32 = True
 torch.backends.cudnn.allow_tf32 = True
 
@@ -15,8 +11,10 @@ import random
 from experiments.complex_geometry.cylinder_geometry import prepare_geometry, scale
 from geofbpinn.geometry.plot import plot_decomposition2d
 from geofbpinn.geometry.polygon_decomposition import Decomposition2DPolygon
-from geofbpinn.networks.schedulers.layer import BaseLayerScheduler
-from geofbpinn.networks.topology.fbpinn.lbfgs_finetune import lbfgs_finetune
+from geofbpinn.networks.schedulers.layer import (
+    BaseLayerScheduler,
+    TwoStepLayerScheduler,
+)
 from geofbpinn.networks.schedulers.loss import AdaptiveLossScheduler, LossScheduler
 from geofbpinn.networks.topology.fbpinn.model import FBPINN
 from functions.cylinder_viscid import CylinderViscid
@@ -27,12 +25,13 @@ import mlflow
 print("Torch on cuda", torch.cuda.is_available())
 
 device = "cuda" if torch.cuda.is_available() else "cpu"
+epochs = 200_000
 domain, hole = prepare_geometry()
 v_inf = 0.0075
-block_size = (0.25, 0.25)
-overlap = (0.08, 0.08)
-bbox_left = (-block_size[0] / 2, -block_size[1] / 2)
-bbox_right = (2000 * scale + block_size[0] / 2, 1200 * scale + block_size[1] / 2)
+block_size = (0.2, 0.2)
+overlap = (0.07, 0.07)
+bbox_left = (-block_size[0] / 4, -block_size[1] / 4)
+bbox_right = (2000 * scale + block_size[0] / 4, 1200 * scale + block_size[1] / 4)
 points_per_block = 100
 eps_full = 1e-3
 lr = 1e-4
@@ -66,8 +65,13 @@ dec = Decomposition2DPolygon(
     holes=[hole],
     device=device,
 )
-# dec.remove_redundant_blocks(samples_per_block=2000, tol=0.0001, verbose=False)
-# plot_decomposition(dec.blocks, polygon_vertices=domain, holes=[hole], figsize=(12, 4), savepath="decomposition_airfoil.png")
+dec.remove_redundant_blocks(samples_per_block=2000, tol=0.0001, verbose=False)
+plot_decomposition2d(
+    dec.blocks,
+    polygon_vertices=domain,
+    holes=[hole],
+    figsize=(12, 4),
+)
 print(f"Decomposition has {len(dec.blocks)} blocks")
 
 model_config = {
@@ -116,7 +120,8 @@ nn.custom_compile(
 mlflow.log_param("Number of submodels", len(nn.blocks))
 mlflow.log_param("Num blocks per axis", nn.decomposition.num_blocks_per_axis)
 mlflow.log_param("Blocks per axis", list(map(len, nn.decomposition.blocks_per_axis)))
-print("Blocks per axis", list(map(len, nn.decomposition.blocks_per_axis)))
+b_per_a = list(map(len, nn.decomposition.blocks_per_axis))
+print("Blocks per axis", b_per_a)
 
 x = pde.val_input[::10]
 y = torch.tensor(pde.solution(x), device=device)
@@ -126,9 +131,12 @@ loss_before_train = nn.evaluate(x, y, verbose=0)
 
 layer_scheduler_config = {
     "n": len(nn.blocks),
+    "first": (0, sum(b_per_a[0 : len(b_per_a) // 2 + 2])),
+    "second": (sum(b_per_a[0 : len(b_per_a) // 2]), len(nn.blocks)),
+    "step": epochs // 2,
 }
-layer_scheduler = BaseLayerScheduler(**layer_scheduler_config)
-mlflow.log_param("Layer scheduler", "BaseLayerScheduler")
+layer_scheduler = TwoStepLayerScheduler(**layer_scheduler_config)
+mlflow.log_param("Layer scheduler", "TwoStepLayerScheduler")
 mlflow.log_params(layer_scheduler_config)
 
 loss_scheduler_config = {
@@ -141,7 +149,7 @@ mlflow.log_param("Loss scheduler", "LossScheduler")
 mlflow.log_params(loss_scheduler_config)
 
 train_config = {
-    "epochs": 80000,
+    "epochs": epochs,
     "start_epoch": 0,
     "patience": 4_000_000,
     "eval_interval": 100,
@@ -170,32 +178,5 @@ train_fbpinn(
     lr_scheduler=scheduler,
 )
 nn.save_weights(f"./checkpoints/{run_name}/cyclinder_1_layer.weights.h5")
-
-lfbgs_config = {
-    "lr": 1,
-    "max_iter": 20,
-    "max_eval": 25,
-    "tolerance_grad": 1e-7,
-    "tolerance_change": 1e-9,
-    "history_size": 100,
-    "line_search_fn": "strong_wolfe",
-}
-mlflow.log_params(lfbgs_config)
-nn.optimizer = torch.optim.LBFGS(nn.parameters(), **lfbgs_config)
-finetune_config = {
-    "epochs_lbfgs": 500,
-}
-mlflow.log_params(finetune_config)
-lbfgs_finetune(
-    fbpinn=nn,
-    start_epoch=train_config["epochs"],
-    epochs=train_config["epochs"] + finetune_config["epochs_lbfgs"],
-    val_input=x,
-    val_truth=y,
-    layer_scheduler=layer_scheduler,
-    loss_scheduler=loss_scheduler,
-    path_to_ckpt=train_config["path_to_ckpt"],
-)
-
 
 mlflow.end_run()

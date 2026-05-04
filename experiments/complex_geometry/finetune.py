@@ -1,7 +1,4 @@
 import os
-
-# os.environ['CUDA_VISIBLE_DEVICES'] = ""
-os.environ["KERAS_BACKEND"] = "torch"
 import torch
 
 # torch.cuda.is_available = lambda: False
@@ -11,10 +8,13 @@ import random
 from experiments.complex_geometry.cylinder_geometry import prepare_geometry, scale
 from geofbpinn.geometry.plot import plot_decomposition2d
 from geofbpinn.geometry.polygon_decomposition import Decomposition2DPolygon
-from geofbpinn.networks.schedulers.layer import BaseLayerScheduler
-from geofbpinn.networks.schedulers.loss import AdaptiveLossScheduler
+from geofbpinn.networks.schedulers.layer import (
+    BaseLayerScheduler,
+    TwoStepLayerScheduler,
+)
+from geofbpinn.networks.schedulers.loss import AdaptiveLossScheduler, LossScheduler
 from geofbpinn.networks.topology.fbpinn.model import FBPINN
-from functions.cylinder_inviscid import CylinderInviscid
+from functions.cylinder_viscid import CylinderViscid
 from geofbpinn.networks.topology.fbpinn.trainer import train_fbpinn
 from geofbpinn.networks.schedulers.lr import WarmupReduceLROnPlateau
 import mlflow
@@ -22,24 +22,21 @@ import mlflow
 print("Torch on cuda", torch.cuda.is_available())
 
 device = "cuda" if torch.cuda.is_available() else "cpu"
+epochs = 200_000
 domain, hole = prepare_geometry()
 v_inf = 0.0075
-block_size = (0.25, 0.25)
-overlap = (0.08, 0.08)
-bbox_left = (-block_size[0] / 2, -block_size[1] / 2)
-bbox_right = (2000 * scale + block_size[0] / 2, 1200 * scale + block_size[1] / 2)
-points_per_block = 200
+block_size = (0.2, 0.2)
+overlap = (0.07, 0.07)
+bbox_left = (-block_size[0] / 4, -block_size[1] / 4)
+bbox_right = (2000 * scale + block_size[0] / 4, 1200 * scale + block_size[1] / 4)
+points_per_block = 100
 eps_full = 1e-3
-x_lim = 1.0
-y_lim = 1.0
-lc = [0, 0]
-rc = [x_lim, y_lim]
-lr = 1e-4
-block_scales = {"vx": 0.00137, "vy": 0.00142, "pressure": 1.46e-5}
+lr = 5e-5
+block_scales = {"vx": 0.003505, "vy": 0.00129, "pressure": 1.69e-05}
 block_shifts = {
-    "vx": 0.007,
-    "vy": -3.5e-6,
-    "pressure": -2.93e-6,
+    "vx": 0.0072,
+    "vy": -1.9e-06,
+    "pressure": -7.9e-06,
 }
 output_scale = torch.tensor(
     [block_scales["pressure"], block_scales["vx"], block_scales["vy"]],
@@ -65,36 +62,35 @@ dec = Decomposition2DPolygon(
     holes=[hole],
     device=device,
 )
-# dec.remove_redundant_blocks(samples_per_block=2000, tol=0.0001, verbose=False)
+dec.remove_redundant_blocks(samples_per_block=2000, tol=0.0001, verbose=False)
 plot_decomposition2d(
     dec.blocks,
     polygon_vertices=domain,
     holes=[hole],
     figsize=(12, 4),
-    savepath="decomposition_airfoil.png",
 )
 print(f"Decomposition has {len(dec.blocks)} blocks")
 
 model_config = {
     "input_size": 2,
     "output_size": 3,
-    "activation_func": ["tanh", "tanh", "linear"],
-    "models_size": [32, 32],
+    "activation_func": ["tanh", "tanh", "tanh", "linear"],
+    "models_size": [16, 16, 16],
     "device": device,
     "weight": torch.nn.init.xavier_uniform_,
     "biases": torch.nn.init.zeros_,
 }
 
-pde = CylinderInviscid(cylinder=hole, scale=scale, v_inf=v_inf, device=device)
+pde = CylinderViscid(cylinder=hole, scale=scale, v_inf=v_inf, device=device)
 phys_loss = pde.phys_loss
 which = pde.description
 
-mlflow.set_experiment("FBPINN Cyclinder")
-run_id = 1309
-ckpt_epoch = 99_999
+mlflow.set_experiment("FBPINN Viscid Cylinder")
+run_id = 2225
+ckpt_epoch = 135000
 run_name = f"FBPINN_full_{run_id}"
 mlflow.start_run(
-    run_id="8557f8ac8fad4f368e76dc102cb7deae",
+    run_id="f5198eef4a4e45d6be65aacb26042dba",
     run_name=run_name,
     log_system_metrics=True,
 )
@@ -113,6 +109,7 @@ nn.load_weights(f"./checkpoints/FBPINN_full_{run_id}/fbpinn123_{ckpt_epoch}.weig
 nn.custom_compile(
     optimizer="AdamW", rate=lr, loss_func="RelativeL1Loss", run_eagerly=False
 )
+b_per_a = list(map(len, nn.decomposition.blocks_per_axis))
 print("Blocks per axis", list(map(len, nn.decomposition.blocks_per_axis)))
 
 x = pde.val_input[::10]
@@ -123,24 +120,27 @@ loss_before_train = nn.evaluate(x, y, verbose=0)
 
 layer_scheduler_config = {
     "n": len(nn.blocks),
+    "first": (0, sum(b_per_a[0 : len(b_per_a) // 2 + 2])),
+    "second": (sum(b_per_a[0 : len(b_per_a) // 2]), len(nn.blocks)),
+    "step": ckpt_epoch + 1,
 }
-layer_scheduler = BaseLayerScheduler(**layer_scheduler_config)
+layer_scheduler = TwoStepLayerScheduler(**layer_scheduler_config)
 
 loss_scheduler_config = {
     "k": 0,
     "boundary_indices": list(range(len(pde.sub_losses))),
-    "loss_weights": [1, 1, 1, 1, 1, 100],
-    "threshold": 1e-3,
-    "loss_multiplier": 10.0,
+    "loss_weights": [10, 1, 1, 1, 1, 100],
 }
-loss_scheduler = AdaptiveLossScheduler(**loss_scheduler_config)
+loss_scheduler = LossScheduler(**loss_scheduler_config)
+mlflow.log_param("Loss scheduler", "LossScheduler")
+mlflow.log_params(loss_scheduler_config)
 
 train_config = {
-    "epochs": 200000,
+    "epochs": epochs,
     "start_epoch": ckpt_epoch + 1,
     "patience": 4_000_000,
     "eval_interval": 100,
-    "log_interval": 500,
+    "log_interval": 1000,
     "mode": "layer",
     "layer_scheduler": layer_scheduler,
     "loss_scheduler": loss_scheduler,

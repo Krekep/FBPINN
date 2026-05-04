@@ -1,17 +1,14 @@
 import os
-
-# os.environ['CUDA_VISIBLE_DEVICES'] = ""
-os.environ["KERAS_BACKEND"] = "torch"
 import torch
-
-# torch.cuda.is_available = lambda: False
-
 import random
 
 from experiments.complex_geometry.cylinder_geometry import prepare_geometry, scale
 from geofbpinn.geometry.plot import plot_decomposition2d
 from geofbpinn.geometry.polygon_decomposition import Decomposition2DPolygon
-from geofbpinn.networks.schedulers.layer import BaseLayerScheduler
+from geofbpinn.networks.schedulers.layer import (
+    BaseLayerScheduler,
+    TwoStepLayerScheduler,
+)
 from geofbpinn.networks.schedulers.loss import AdaptiveLossScheduler
 from geofbpinn.networks.topology.fbpinn.model import FBPINN
 from functions.cylinder_inviscid import CylinderInviscid
@@ -23,12 +20,14 @@ print("Torch on cuda", torch.cuda.is_available())
 
 device = "cuda" if torch.cuda.is_available() else "cpu"
 domain, hole = prepare_geometry()
+
+epochs = 100_000
 v_inf = 0.0075
-block_size = (0.4, 0.4)
-overlap = (0.15, 0.15)
-bbox_left = (-block_size[0] / 2, -block_size[1] / 2)
-bbox_right = (2000 * scale + block_size[0] / 2, 1200 * scale + block_size[1] / 2)
-points_per_block = 400
+block_size = (0.16, 0.16)
+overlap = (0.05, 0.05)
+bbox_left = (-block_size[0] / 4, -block_size[1] / 4)
+bbox_right = (2000 * scale + block_size[0] / 4, 1200 * scale + block_size[1] / 4)
+points_per_block = 100
 boundary_points_per_block = 0
 eps_full = 1e-3
 x_lim = 1.0
@@ -66,7 +65,7 @@ dec = Decomposition2DPolygon(
     holes=[hole],
     device=device,
 )
-# dec.remove_redundant_blocks(samples_per_block=2000, tol=0.0001, verbose=False)
+dec.remove_redundant_blocks(samples_per_block=2000, tol=0.0001, verbose=False)
 plot_decomposition2d(
     dec.blocks,
     polygon_vertices=domain,
@@ -79,8 +78,8 @@ print(f"Decomposition has {len(dec.blocks)} blocks")
 model_config = {
     "input_size": 2,
     "output_size": 3,
-    "activation_func": ["tanh", "tanh", "linear"],
-    "models_size": [16, 16],
+    "activation_func": ["tanh", "tanh", "tanh", "linear"],
+    "models_size": [16, 16, 16],
     "device": device,
     "weight": torch.nn.init.xavier_uniform_,
     "biases": torch.nn.init.zeros_,
@@ -123,7 +122,8 @@ nn.custom_compile(
 mlflow.log_param("Number of submodels", len(nn.blocks))
 mlflow.log_param("Num blocks per axis", nn.decomposition.num_blocks_per_axis)
 mlflow.log_param("Blocks per axis", list(map(len, nn.decomposition.blocks_per_axis)))
-print("Blocks per axis", list(map(len, nn.decomposition.blocks_per_axis)))
+b_per_a = list(map(len, nn.decomposition.blocks_per_axis))
+print("Blocks per axis", b_per_a)
 
 x = pde.val_input[::10]
 y = torch.tensor(pde.solution(x), device=device)
@@ -145,9 +145,12 @@ loss_before_train = nn.evaluate(x, y, verbose=0)
 # layer_scheduler = SequenceLayerScheduler(**layer_scheduler_config)
 layer_scheduler_config = {
     "n": len(nn.blocks),
+    "first": (0, sum(b_per_a[0 : len(b_per_a) // 2 + 2])),
+    "second": (sum(b_per_a[0 : len(b_per_a) // 2]), len(nn.blocks)),
+    "step": epochs // 2,
 }
-layer_scheduler = BaseLayerScheduler(**layer_scheduler_config)
-mlflow.log_param("Layer scheduler", "BaseLayerScheduler")
+layer_scheduler = TwoStepLayerScheduler(**layer_scheduler_config)
+mlflow.log_param("Layer scheduler", "TwoStepLayerScheduler")
 mlflow.log_params(layer_scheduler_config)
 
 loss_scheduler_config = {
@@ -162,7 +165,7 @@ mlflow.log_param("Loss scheduler", "AdaptiveLossScheduler")
 mlflow.log_params(loss_scheduler_config)
 
 train_config = {
-    "epochs": 100000,
+    "epochs": epochs,
     "start_epoch": 0,
     "patience": 4_000_000,
     "eval_interval": 100,
@@ -177,7 +180,7 @@ scheduler = WarmupReduceLROnPlateau(
     nn.optimizer,
     mode="min",
     factor=0.8,
-    patience=100000,
+    patience=epochs,
     warmup_epochs=10,
     warmup_start_factor=0.1,
 )

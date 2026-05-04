@@ -1,6 +1,5 @@
 import numpy as np
 import torch
-import keras
 
 from .cylinder_inviscid import mse_zero
 from .phys_losses import PhysLoss
@@ -74,9 +73,9 @@ class NoObstacleInviscid(PhysLoss):
 
     def phys_loss(self, model, x_in, active_models, **kwargs):
         preds = model(x_in, active_models=active_models)
-        p = keras.ops.squeeze(preds[:, 0:1], axis=-1)
-        vx = keras.ops.squeeze(preds[:, 1:2], axis=-1)
-        vy = keras.ops.squeeze(preds[:, 2:3], axis=-1)
+        p = torch.squeeze(preds[:, 0:1], dim=-1)
+        vx = torch.squeeze(preds[:, 1:2], dim=-1)
+        vy = torch.squeeze(preds[:, 2:3], dim=-1)
 
         dp = torch.autograd.grad(p.sum(), x_in, create_graph=True)[0]
         dvx = torch.autograd.grad(vx.sum(), x_in, create_graph=True)[0]
@@ -122,7 +121,7 @@ class NoObstacleInviscid(PhysLoss):
         pts = torch.stack([x, y], dim=1)
 
         preds = model(pts, active_models=active_models)
-        p = keras.ops.squeeze(preds[:, 0:1], axis=-1)
+        p = torch.squeeze(preds[:, 0:1], dim=-1)
 
         return self.loss_func(p / self.p_scale)
 

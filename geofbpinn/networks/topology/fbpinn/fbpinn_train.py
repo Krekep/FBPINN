@@ -119,14 +119,13 @@ def layer_train(
         loss, losses, max_w_update = train_step(
             fbpinn, data, layer_indices, frozen_indices, loss_indices, loss_weights
         )
-
-        end_time = time.perf_counter()
         if epoch % eval_interval == 0:
             with torch.no_grad():
                 val_metrics = get_val_score(fbpinn, val_input, val_truth)
                 mlflow.log_metric(
                     f"Max layer weights gradient", max_w_update, step=epoch
                 )
+                end_time = time.perf_counter()
                 log_validation_metrics(
                     fbpinn,
                     val_metrics,
@@ -148,15 +147,8 @@ def layer_train(
                     block.refresh_pool()
                 if epoch % eval_interval != 0:
                     val_metrics = get_val_score(fbpinn, val_input, val_truth)
-                log_graphics(
-                    fbpinn,
-                    [None],
-                    val_input,
-                    val_truth,
-                    epoch,
-                    loss,
-                    png_salt,
-                    val_metrics,
+                print(
+                    f"Epoch {epoch}, loss {loss}, {datetime.datetime.now()}. {val_metrics}"
                 )
                 print(f"Epoch {epoch}, layer indices {layer_indices}")
                 print(f"Epoch {epoch}, loss indices {loss_indices}")

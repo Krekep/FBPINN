@@ -3,5 +3,5 @@ class PhysLoss:
         self.description = description
         self.full_losses: list[callable] = []  # on full domain
         self.sub_losses: list[
-            tuple[callable, dict[str, tuple[list[float], list[float]]]]
+            tuple[callable, list[list[float]]]
         ] = []  # on subdomain (e.g. u(0, x) = sin(x))

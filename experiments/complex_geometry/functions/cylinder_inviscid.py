@@ -88,8 +88,10 @@ class CylinderInviscid(PhysLoss):
         vx = preds[:, 1]
         vy = preds[:, 2]
 
-        dp = torch.autograd.grad(p.sum(), x_in, create_graph=True)[0]
-        dvx = torch.autograd.grad(vx.sum(), x_in, create_graph=True)[0]
+        dp = torch.autograd.grad(p.sum(), x_in, create_graph=True, retain_graph=True)[0]
+        dvx = torch.autograd.grad(vx.sum(), x_in, create_graph=True, retain_graph=True)[
+            0
+        ]
         dvy = torch.autograd.grad(vy.sum(), x_in, create_graph=True)[0]
 
         dp_dx, dp_dy = dp[:, 0], dp[:, 1]
@@ -156,9 +158,9 @@ class CylinderInviscid(PhysLoss):
         vx = preds[:, 1:2]
         vy = preds[:, 2:3]
         p = preds[:, 0:1]
-        dvx_dy = torch.autograd.grad(vx, x, torch.ones_like(vx), create_graph=True)[0][
-            :, 1:2
-        ]
+        dvx_dy = torch.autograd.grad(
+            vx, x, torch.ones_like(vx), create_graph=True, retain_graph=True
+        )[0][:, 1:2]
         dp_dy = torch.autograd.grad(p, x, torch.ones_like(p), create_graph=True)[0][
             :, 1:2
         ]
@@ -183,9 +185,9 @@ class CylinderInviscid(PhysLoss):
         vx = preds[:, 1:2]
         vy = preds[:, 2:3]
         p = preds[:, 0:1]
-        dvx_dy = torch.autograd.grad(vx, x, torch.ones_like(vx), create_graph=True)[0][
-            :, 1:2
-        ]
+        dvx_dy = torch.autograd.grad(
+            vx, x, torch.ones_like(vx), create_graph=True, retain_graph=True
+        )[0][:, 1:2]
         dp_dy = torch.autograd.grad(p, x, torch.ones_like(p), create_graph=True)[0][
             :, 1:2
         ]

@@ -19,6 +19,7 @@ def plot_decomposition2d(
     holes: Optional[List[List[Tuple[float, float]]]] = None,
     figsize: tuple[int, int] = (11, 4),
     savepath: Optional[str] = None,
+    title: str = "Decomposition with holes",
 ) -> None:
     """
     Plot `Decomposition2DPolygon`
@@ -35,6 +36,8 @@ def plot_decomposition2d(
         Figsize for matplotlib
     savepath: Optional[str]
         Path to save picture
+    title: str
+        Title of plot
     """
     fig, ax = plt.subplots(figsize=figsize)
     ax.set_aspect("equal", adjustable="box")
@@ -166,7 +169,7 @@ def plot_decomposition2d(
     ax.legend(handles=legend_elems, loc="upper right", fontsize="small")
     ax.set_xlabel("x")
     ax.set_ylabel("y")
-    ax.set_title("Decomposition with holes")
+    ax.set_title(title)
     ax.grid(alpha=0.25)
     plt.tight_layout()
     if savepath:

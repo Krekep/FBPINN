@@ -81,8 +81,9 @@ if __name__ == "__main__":
     plot_decomposition2d(
         dec.blocks,
         polygon_vertices=airfoil,
-        figsize=(12, 4),
-        savepath="decomposition_airfoil.png",
+        figsize=(12, 12),
+        savepath="decomposition_airwing.png",
+        title="Decomposition of airplane wing",
     )
     dec.remove_redundant_blocks(samples_per_block=2000, tol=0.0001, verbose=False)
     print("Result items after cleanup:", len(dec.blocks))
@@ -90,6 +91,7 @@ if __name__ == "__main__":
     plot_decomposition2d(
         dec.blocks,
         polygon_vertices=airfoil,
-        figsize=(12, 4),
-        savepath="decomposition_airfoil_cleanup.png",
+        figsize=(12, 12),
+        savepath="decomposition_airwing_cleanup.png",
+        title="Decomposition of airplane wing",
     )

@@ -338,6 +338,7 @@ class Decomposition2DPolygon(BaseDecomposition):
             for col in self.blocks_per_axis
             if any(w in set(new_blocks) for w in col)
         ]
+        self.prepare_batched()
 
         if verbose:
             print(f"Removed {removed} redundant blocks, remaining {len(self.blocks)}")

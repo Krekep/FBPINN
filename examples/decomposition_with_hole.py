@@ -40,7 +40,6 @@ plot_decomposition2d(
     savepath="hole.png",
 )
 dec.remove_redundant_blocks(samples_per_block=2000, tol=0.0001, verbose=False)
-dec.remove_redundant_blocks(samples_per_block=2000, tol=0.0001, verbose=False)
 plot_decomposition2d(
     dec.blocks,
     polygon_vertices=outer_poly,

@@ -315,8 +315,8 @@ def test_block_denorm_scale_shift_stored(
         block_shift=shifts,
     )
     for block in d.blocks:
-        assert block.out_denorm_scale == scales
-        assert block.out_denorm_shift == shifts
+        assert block.out_denorm_scale.detach().cpu().numpy().tolist() == scales
+        assert block.out_denorm_shift.detach().cpu().numpy().tolist() == shifts
 
 
 @pytest.mark.parametrize(

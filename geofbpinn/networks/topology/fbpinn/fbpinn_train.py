@@ -161,9 +161,6 @@ def layer_train(
                         lr_scheduler,
                         epoch,
                     )
-                    fbpinn.save_weights(
-                        f"{path_to_ckpt}/fbpinn{png_salt}_best.weights.h5"
-                    )
         if epoch % log_interval == 0 or epoch == epochs - 1:
             with torch.inference_mode():
                 fbpinn.equation.update()
@@ -178,8 +175,13 @@ def layer_train(
                 print(f"Epoch {epoch}, loss indices {loss_indices}")
                 print(f"Epoch {epoch}, data length {len(data)}")
                 print("Losses", losses)
-                fbpinn.save_weights(
-                    f"{path_to_ckpt}/fbpinn{png_salt}_{epoch}.weights.h5"
+                save_checkpoint(
+                    fbpinn,
+                    f"{path_to_ckpt}/fbpinn{png_salt}_{epoch}.weights.h5",
+                    configs,
+                    fbpinn.optimizer,
+                    lr_scheduler,
+                    epoch,
                 )
         # if loss < best_loss:
         #     best_loss = loss

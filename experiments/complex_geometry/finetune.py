@@ -1,167 +1,106 @@
+import glob
 import os
-import torch
-
-# torch.cuda.is_available = lambda: False
-
 import random
 
-from experiments.complex_geometry.cylinder_geometry import prepare_geometry, scale
-from geofbpinn.geometry.plot import plot_decomposition2d
-from geofbpinn.geometry.polygon_decomposition import Decomposition2DPolygon
-from geofbpinn.networks.schedulers.layer import (
-    BaseLayerScheduler,
-    TwoStepLayerScheduler,
-)
-from geofbpinn.networks.schedulers.loss import AdaptiveLossScheduler, LossScheduler
-from geofbpinn.networks.topology.fbpinn.model import FBPINN
-from functions.cylinder_viscid import CylinderViscid
-from geofbpinn.networks.topology.fbpinn.trainer import train_fbpinn
-from geofbpinn.networks.schedulers.lr import WarmupReduceLROnPlateau
+import numpy as np
+import torch
 import mlflow
 
-print("Torch on cuda", torch.cuda.is_available())
+from experiments.complex_geometry.utils.flat_dict import flatten_dict
+from experiments.complex_geometry.cylinder_geometry import scale
+from functions.cylinder_viscid import CylinderViscid
+from geofbpinn.utils.get_classes import get_layer_scheduler, get_loss_scheduler
+from geofbpinn.utils.checkpoint import load_checkpoint, save_checkpoint
+from geofbpinn.networks.topology.fbpinn.trainer import train_fbpinn
+from cfg.decomposition_config import hole
+from cfg.env_config import env_config
 
-device = "cuda" if torch.cuda.is_available() else "cpu"
-epochs = 200_000
-domain, hole = prepare_geometry()
-v_inf = 0.0075
-block_size = (0.2, 0.2)
-overlap = (0.07, 0.07)
-bbox_left = (-block_size[0] / 4, -block_size[1] / 4)
-bbox_right = (2000 * scale + block_size[0] / 4, 1200 * scale + block_size[1] / 4)
-points_per_block = 100
-eps_full = 1e-3
-lr = 5e-5
-block_scales = {"vx": 0.003505, "vy": 0.00129, "pressure": 1.69e-05}
-block_shifts = {
-    "vx": 0.0072,
-    "vy": -1.9e-06,
-    "pressure": -7.9e-06,
-}
-output_scale = torch.tensor(
-    [block_scales["pressure"], block_scales["vx"], block_scales["vy"]],
-    device=device,
-    requires_grad=False,
+CKPT_ROOT = "./checkpoints"
+RUN_DIR = "./checkpoints/FBPINN_full_7889"
+ADDITIONAL_EPOCHS = 20000
+V_INF = 0.0075
+
+
+def find_latest_checkpoint(root: str, run_dir: str = None) -> str:
+    search_root = run_dir if run_dir else root
+    pattern = os.path.join(search_root, "**", "*.weights.h5")
+    paths = glob.glob(pattern, recursive=True)
+    if not paths:
+        raise FileNotFoundError(f"There is no checkpoints: {pattern}")
+    return max(paths, key=os.path.getmtime)
+
+
+device = env_config["device"]
+torch.manual_seed(env_config["random_seed"])
+random.seed(env_config["random_seed"])
+np.random.seed(env_config["random_seed"])
+if device == "cuda":
+    torch.cuda.manual_seed_all(env_config["random_seed"])
+    torch.backends.cudnn.deterministic = True
+    torch.backends.cudnn.benchmark = False
+
+ckpt_path = find_latest_checkpoint(CKPT_ROOT, RUN_DIR)
+run_dir = os.path.dirname(ckpt_path)
+print(f"Resume from: {ckpt_path}")
+
+pde = CylinderViscid(cylinder=hole, scale=scale, v_inf=V_INF, device=device)
+
+nn, lr_scheduler, checkpoint, start_epoch = load_checkpoint(
+    ckpt_path, pde, device=device
 )
-output_shift = torch.tensor(
-    [block_shifts["pressure"], block_shifts["vx"], block_shifts["vy"]],
-    device=device,
-    requires_grad=False,
-)
+configs = checkpoint["configs"]
+train_config = configs["train"]
 
-dec = Decomposition2DPolygon(
-    polygon_vertices=domain,
-    bbox_left=bbox_left,
-    bbox_right=bbox_right,
-    block_scales=output_scale,
-    block_shift=output_shift,
-    block_size=block_size,
-    overlap=overlap,
-    points_per_block=points_per_block,
-    eps_full=eps_full,
-    holes=[hole],
-    device=device,
-)
-dec.remove_redundant_blocks(samples_per_block=2000, tol=0.0001, verbose=False)
-plot_decomposition2d(
-    dec.blocks,
-    polygon_vertices=domain,
-    holes=[hole],
-    figsize=(12, 4),
-)
-print(f"Decomposition has {len(dec.blocks)} blocks")
+print(f"Loaded epoch={start_epoch}, blocks={len(nn.blocks)}")
 
-model_config = {
-    "input_size": 2,
-    "output_size": 3,
-    "activation_func": ["tanh", "tanh", "tanh", "linear"],
-    "models_size": [16, 16, 16],
-    "device": device,
-    "weight": torch.nn.init.xavier_uniform_,
-    "biases": torch.nn.init.zeros_,
-}
-
-pde = CylinderViscid(cylinder=hole, scale=scale, v_inf=v_inf, device=device)
-phys_loss = pde.phys_loss
-which = pde.description
-
-mlflow.set_experiment("FBPINN Viscid Cylinder")
-run_id = 2225
-ckpt_epoch = 135000
-run_name = f"FBPINN_full_{run_id}"
+mlflow.set_experiment(env_config["experiment_name"])
 mlflow.start_run(
-    run_id="f5198eef4a4e45d6be65aacb26042dba",
-    run_name=run_name,
+    run_name=f"{env_config['model_name']}_resume_{start_epoch}",
     log_system_metrics=True,
 )
-os.makedirs(f"./checkpoints/{run_name}", exist_ok=True)
-logdir = f"./logs/{run_name}"
+mlflow.set_tag("Training Info", f"Resumed from epoch {start_epoch}")
+mlflow.log_param("resumed_from_checkpoint", ckpt_path)
+mlflow.log_params(flatten_dict(configs))
 
-nn = FBPINN(
-    **model_config,
-    physic_loss=phys_loss,
-    boundary_loss=pde.sub_losses,
-    decomposition=dec,
-)
-nn.to(device)
-nn.load_weights(f"./checkpoints/FBPINN_full_{run_id}/fbpinn123_{ckpt_epoch}.weights.h5")
-# nn.load_weights(f"./checkpoints/FBPINN_full_{run_id}/cyclinder_1_layer.weights.h5")
-nn.custom_compile(
-    optimizer="AdamW", rate=lr, loss_func="RelativeL1Loss", run_eagerly=False
-)
-b_per_a = list(map(len, nn.decomposition.blocks_per_axis))
-print("Blocks per axis", list(map(len, nn.decomposition.blocks_per_axis)))
-
-x = pde.val_input[::10]
-y = torch.tensor(pde.solution(x), device=device)
-x = torch.tensor(x, device=device)
-y_pred_before_train = nn.call(x)
-loss_before_train = nn.evaluate(x, y, verbose=0)
-
-layer_scheduler_config = {
-    "n": len(nn.blocks),
-    "first": (0, sum(b_per_a[0 : len(b_per_a) // 2 + 2])),
-    "second": (sum(b_per_a[0 : len(b_per_a) // 2]), len(nn.blocks)),
-    "step": ckpt_epoch + 1,
-}
-layer_scheduler = TwoStepLayerScheduler(**layer_scheduler_config)
+layer_scheduler = get_layer_scheduler(env_config["layer_scheduler"])(n=len(nn.blocks))
 
 loss_scheduler_config = {
     "k": 0,
     "boundary_indices": list(range(len(pde.sub_losses))),
     "loss_weights": [10, 1, 1, 1, 1, 100],
 }
-loss_scheduler = LossScheduler(**loss_scheduler_config)
-mlflow.log_param("Loss scheduler", "LossScheduler")
+loss_scheduler = get_loss_scheduler(env_config["loss_scheduler"])(
+    **loss_scheduler_config
+)
 mlflow.log_params(loss_scheduler_config)
 
-train_config = {
-    "epochs": epochs,
-    "start_epoch": ckpt_epoch + 1,
-    "patience": 4_000_000,
-    "eval_interval": 100,
-    "log_interval": 1000,
-    "mode": "layer",
-    "layer_scheduler": layer_scheduler,
-    "loss_scheduler": loss_scheduler,
-    "path_to_ckpt": f"./checkpoints/{run_name}",
-}
-scheduler = WarmupReduceLROnPlateau(
-    nn.optimizer,
-    mode="min",
-    factor=0.8,
-    patience=50,
-    warmup_epochs=0,
-    warmup_start_factor=0.1,
-)
+x = pde.val_input[::10]
+y = torch.tensor(pde.solution(x), device=device)
+x = torch.tensor(x, device=device)
+
+train_config["layer_scheduler"] = layer_scheduler
+train_config["loss_scheduler"] = loss_scheduler
+train_config["path_to_ckpt"] = run_dir
+train_config["start_epoch"] = start_epoch + 1
+train_config["epochs"] = start_epoch + 1 + ADDITIONAL_EPOCHS
+
 train_fbpinn(
     **train_config,
     fbpinn=nn,
     callbacks=[],
     val_truth=y,
     val_input=x,
-    png_salt=str("123"),
-    lr_scheduler=scheduler,
+    png_salt="resume",
+    lr_scheduler=lr_scheduler,
+    configs=configs,
+)
+
+save_checkpoint(
+    nn,
+    f"{run_dir}/last_resumed.weights.h5",
+    configs,
+    nn.optimizer,
+    lr_scheduler,
+    train_config["epochs"],
 )
 mlflow.end_run()
-nn.save_weights(f"./checkpoints/{run_name}/cyclinder_1_layer.weights.h5")

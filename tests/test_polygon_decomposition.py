@@ -265,8 +265,8 @@ def test_batched_window_shape():
 def test_denorm_propagated_to_all_blocks(scales, shifts):
     d = make_decomp(block_scales=scales, block_shift=shifts)
     for block in d.blocks:
-        assert block.out_denorm_scale == scales
-        assert block.out_denorm_shift == shifts
+        assert block.out_denorm_scale.detach().cpu().numpy().tolist() == scales
+        assert block.out_denorm_shift.detach().cpu().numpy().tolist() == shifts
 
 
 @pytest.mark.parametrize(

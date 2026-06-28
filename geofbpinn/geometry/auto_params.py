@@ -25,10 +25,10 @@ from typing import Optional, Tuple, Sequence
 
 
 def resolve_overlap_and_kappa(
-    overlap: Optional[Tuple[float, float, ...]],
+    overlap: Optional[Tuple[float, ...]],
     block_size: Tuple[float, ...],
     kappa: float = 0.3,
-) -> Tuple[Tuple[float, float, ...], float]:
+) -> Tuple[Tuple[float, ...], float]:
     """
     Resolve the overlap/kappa ambiguity. If overlap is not None, override kappa
 
@@ -86,7 +86,7 @@ def compute_omega(
 def resolve_params(
     block_size: Tuple[float, ...],
     eps: float = 1e-4,
-    overlap: Optional[Tuple[float, float, ...]] = None,
+    overlap: Optional[Tuple[float, ...]] = None,
     kappa: float = 0.3,
     omega: Optional[float] = None,
 ) -> tuple[Sequence[float], float, float]:

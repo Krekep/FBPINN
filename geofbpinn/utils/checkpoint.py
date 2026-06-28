@@ -23,27 +23,32 @@ def save_checkpoint(model, path, configs, optimizer, scheduler, epoch):
 
 def load_checkpoint(path, pde, device="cpu"):
     """
-    Полностью восстанавливает состояние эксперимента из чекпоинта.
+    This function reconstructs the FBPINN model, its optimizer, and the learning
+    rate scheduler exactly as they were at the time of saving. It also restores
+    the epoch number and all configuration dictionaries.
 
-    Параметры
+    Parameters
     ----------
     path : str
-        Путь к файлу чекпоинта.
-    device : str
-        Устройство для загрузки ('cpu' или 'cuda').
+        Path to the checkpoint file (.pt or .pth).
+    pde : object
+        PhysLoss object
+    device : str, optional
+        Device to load the model onto ('cpu' or 'cuda'). Defaults to 'cpu'.
 
-    Возвращает
-    ----------
-    dict
-        Содержит:
-            - model: загруженная модель FBPINN с оптимизатором
-            - optimizer: оптимизатор (доступен через model.optimizer)
-            - scheduler: восстановленный планировщик (или None)
-            - epoch: номер эпохи (если есть)
-            - configs: словарь всех конфигов
-            - extra: дополнительные данные (метрики и т.п.)
+    Returns
+    -------
+    tuple
+        A tuple containing:
+            - nn (FBPINN): The loaded FBPINN model with its internal optimizer
+              already restored
+            - scheduler (object or None): The restored learning rate scheduler
+              if it exists in the checkpoint; otherwise, None.
+            - checkpoint (dict): The raw loaded checkpoint dictionary, which
+              includes the 'configs' and any other metadata saved.
+            - epoch (int): The epoch number at which the checkpoint was saved.
     """
-    checkpoint = torch.load(path, map_location=device)
+    checkpoint = torch.load(path, map_location=device, weights_only=False)
     epoch = checkpoint["epoch"]
     configs = checkpoint["configs"]
 
@@ -67,6 +72,7 @@ def load_checkpoint(path, pde, device="cpu"):
         physic_loss=pde.phys_loss,
         boundary_loss=pde.sub_losses,
         decomposition=dec,
+        device=device
     )
     nn.to(device)
     nn.custom_compile(**compile_cfg)

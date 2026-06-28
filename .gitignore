@@ -195,3 +195,5 @@ publish_pypi.bat
 *.png
 *tfevents*
 *mlruns*
+*.pt.trace.json
+*.gif

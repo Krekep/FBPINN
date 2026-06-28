@@ -14,6 +14,8 @@ import torch
 from torch._C._profiler import ProfilerActivity
 from torch.profiler import profile
 
+from geofbpinn.utils.checkpoint import save_checkpoint
+
 if typing.TYPE_CHECKING:
     from geofbpinn.networks.topology.fbpinn.model import FBPINN
 
@@ -33,6 +35,7 @@ def layer_train(
     loss_scheduler: LossScheduler = None,
     path_to_ckpt: str = "",
     lr_scheduler=None,
+    configs: dict = None,
 ) -> None:
     """
     Dependent simultaneous training.
@@ -66,11 +69,14 @@ def layer_train(
         Path to checkpoint
     lr_scheduler:
         Learning rate scheduler
+    configs: dict
+        Model configs
     """
     curr_patience = 0
     best_loss = torch.tensor(1e6, device=fbpinn.device)
     best_val_loss = 1e6
     max_w_update = 1e6
+    prev_trainable_set = set()
     # with profile(
     #         activities=[ProfilerActivity.CPU, ProfilerActivity.CUDA],
     #         schedule=torch.profiler.schedule(
@@ -96,10 +102,12 @@ def layer_train(
         frozen_indices = layer_scheduler.get_frozen_indices()
         trainable_set = set(layer_indices) - set(frozen_indices)
 
-        for i, (nn, _) in enumerate(fbpinn.blocks):
+        changed = trainable_set ^ prev_trainable_set
+        for i in changed:
             requires = i in trainable_set
-            for p in nn.parameters():
+            for p in fbpinn.blocks[i][0].parameters():
                 p.requires_grad_(requires)
+        prev_trainable_set = trainable_set
 
         loss_indices, loss_weights = loss_scheduler.on_epoch_start(
             curr_max_w_update=max_w_update
@@ -117,10 +125,16 @@ def layer_train(
         ), f"""Data for train is empty.
         Train indices {layer_indices}, frozen {frozen_indices}"""
         loss, losses, max_w_update = train_step(
-            fbpinn, data, layer_indices, frozen_indices, loss_indices, loss_weights
+            fbpinn,
+            data,
+            trainable_set,
+            layer_indices,
+            frozen_indices,
+            loss_indices,
+            loss_weights,
         )
         if epoch % eval_interval == 0:
-            with torch.no_grad():
+            with torch.inference_mode():
                 val_metrics = get_val_score(fbpinn, val_input, val_truth)
                 mlflow.log_metric(
                     f"Max layer weights gradient", max_w_update, step=epoch
@@ -138,11 +152,21 @@ def layer_train(
                     # lr_scheduler.step()
                 if val_metrics["Validation MSE loss"] < best_val_loss:
                     best_val_loss = val_metrics["Validation MSE loss"]
+
+                    save_checkpoint(
+                        fbpinn,
+                        f"{path_to_ckpt}/fbpinn{png_salt}_best.weights.h5",
+                        configs,
+                        fbpinn.optimizer,
+                        lr_scheduler,
+                        epoch,
+                    )
                     fbpinn.save_weights(
                         f"{path_to_ckpt}/fbpinn{png_salt}_best.weights.h5"
                     )
         if epoch % log_interval == 0 or epoch == epochs - 1:
-            with torch.no_grad():
+            with torch.inference_mode():
+                fbpinn.equation.update()
                 for _, block in fbpinn.blocks:
                     block.refresh_pool()
                 if epoch % eval_interval != 0:
@@ -170,6 +194,7 @@ def layer_train(
 def train_step(
     fbpinn: "FBPINN",
     data: torch.Tensor,
+    trainable_set: set[int],
     layer_indices: list[int],
     frozen_indices: list[int],
     loss_indices: list[int],
@@ -184,6 +209,8 @@ def train_step(
         model instance
     data: torch.Tensor
         points
+    trainable_set: set[int]
+         set of trainable model indices
     layer_indices: list[int]
          list of active models
     frozen_indices: list[int]
@@ -202,25 +229,33 @@ def train_step(
     max_grad: float
         maximum update gradient
     """
-    trainable_set = set(layer_indices) - set(frozen_indices)
     fbpinn.zero_grad()
-    for sw in fbpinn.stacked_w + fbpinn.stacked_b:
-        sw.grad = None
+    # for sw in fbpinn.stacked_w + fbpinn.stacked_b:
+    #     sw.grad = None
 
-    loss = torch.zeros(1, device=data.device)
-    losses = []
+    # loss = torch.zeros(1, device=data.device)
+    losses: list[torch.Tensor] = []
     for i, (loss_func, models) in enumerate(fbpinn.model_per_loss):
         if i not in loss_indices:
             continue
         active_indices = [m for m in models if m in trainable_set]
+        introduced_indices = [m for m in models if m in layer_indices]
         if not active_indices:
             continue
-        temp = loss_func(fbpinn, data, active_models=active_indices) * loss_weights[i]
+        temp = (
+            loss_func(
+                fbpinn,
+                data,
+                active_models=active_indices,
+                introduced_models=introduced_indices,
+            )
+            * loss_weights[i]
+        )
         losses.append(temp)
-        loss += temp
+    loss: torch.Tensor = sum(losses)
     loss.backward()
     # fbpinn._scatter_gradients()
-    torch.nn.utils.clip_grad_norm_(fbpinn.parameters(), max_norm=1)
+    torch.nn.utils.clip_grad_norm_(fbpinn.stacked_w + fbpinn.stacked_b, max_norm=1.0)
     fbpinn.optimizer.step()
     # fbpinn._sync_stacked_params()
     max_grad = torch.stack(
@@ -261,10 +296,11 @@ def get_val_score(
     diff = y_true - y_pred
     abs_diff = torch.abs(diff)  # (N, d)
     abs_true = torch.abs(y_true)  # (N, d)
+    mean_diff = torch.mean(abs_diff)
 
     val_mse_loss = torch.mean(torch.square(diff))
-    val_mae_loss = torch.mean(abs_diff)
-    val_l1_loss = torch.mean(abs_diff) / torch.clamp(torch.mean(abs_true), min=1e-9)
+    val_mae_loss = mean_diff
+    val_l1_loss = mean_diff / torch.clamp(torch.mean(abs_true), min=1e-9)
 
     per_component_mae = abs_diff.mean(dim=0)  # (d,)
     per_component_base = abs_true.mean(dim=0)  # (d,)

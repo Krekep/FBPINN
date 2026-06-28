@@ -1,3 +1,6 @@
+import torch
+
+
 class LossScheduler:
     """
     Simple loss scheduler. First k epochs it returns only boundary and initial loss indices, after returns all loss indices
@@ -37,10 +40,11 @@ class AdaptiveLossScheduler(LossScheduler):
         loss_weights: list[float],
         threshold: float = 1e-3,
         loss_multiplier: float = 10,
+        device: str = "cpu",
         **kwargs,
     ):
         super().__init__(k, boundary_indices, loss_weights)
-        self.threshold = threshold
+        self.threshold = torch.tensor(threshold, dtype=torch.float32, device=device)
         self.loss_multiplier = loss_multiplier
 
     def on_epoch_start(

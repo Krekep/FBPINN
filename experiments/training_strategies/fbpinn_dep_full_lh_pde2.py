@@ -15,18 +15,18 @@ from geofbpinn.networks.schedulers.layer import (
     SequenceBlockScheduler,
     BaseLayerScheduler,
 )
-from experiments.train_strategies.Functions.LH_PDE1 import LH_PDE1
+from experiments.training_strategies.Functions.LH_PDE1 import LH_PDE1
 
 device = "cuda" if torch.cuda.is_available() else "cpu"
 x_lim = 1.0
-t_lim = 0.5
+t_lim = 1.0
 domain_lc = [0, 0]
 domain_rc = [t_lim, x_lim]
 pde = LH_PDE1(end_time=t_lim, device=device)
 phys_loss = pde.phys_loss
 which = pde.description
 
-mlflow.set_experiment("FBPINN PDE Heat 1D")
+mlflow.set_experiment("FBPINN PDE Wave 1D")
 run_id = random.randint(1, 10000)
 run_name = f"FBPINN_full_{run_id}"
 mlflow.start_run(run_name=run_name)
@@ -84,6 +84,7 @@ logdir = f"./logs/{run_name}"
 nn = FBPINN(
     **model_config,
     decomposition=dec,
+    equation=pde,
     physic_loss=phys_loss,
     boundary_loss=pde.sub_losses,
 )
@@ -108,7 +109,7 @@ mlflow.log_params(layer_scheduler_config)
 loss_scheduler_config = {
     "k": 5000,
     "boundary_indices": list(range(len(pde.sub_losses))),
-    "loss_weights": [10, 1, 1, 1, 10],
+    "loss_weights": [10000, 10, 10, 10, 1],
 }
 loss_scheduler = LossScheduler(**loss_scheduler_config)
 mlflow.log_param("Loss scheduler", "LossScheduler")
@@ -142,7 +143,7 @@ print("After", loss_after_train)
 mlflow.log_metric("Loss before training", loss_before_train)
 mlflow.log_metric("Loss after training", loss_after_train)
 mlflow.end_run()
-nn.save_weights(f"lh_pde_2_dep_full_{run_id}.weights.h5")
+nn.save_weights(f"lh_pde_1_dep_full_{run_id}.weights.h5")
 
 x_plot = torch.linspace(domain_lc[1], domain_rc[1], steps=10000, device=device)
 for t_py in [i / 10 for i in range(0, int(10 * t_lim + 1))]:

@@ -1,8 +1,11 @@
-from typing import Callable
+import math
+from typing import Callable, Optional, Tuple
 
 import numpy as np
 import numpy.typing as npt
 import torch
+
+from geofbpinn.geometry.auto_params import resolve_params
 
 
 class RectangleDomain:
@@ -32,6 +35,7 @@ class Block:
         "out_denorm_shift",
         "sampler",
         "_pool",
+        "_pool_size",
     ]
 
     def get_data(self) -> torch.Tensor:
@@ -45,7 +49,8 @@ class Block:
         """
         pool_size = self._pool.shape[0]
         n = self.data_shape[0]
-        idx = torch.randperm(pool_size, device=self._pool.device)[:n]
+        # idx = torch.randperm(pool_size, device=self._pool.device)[:n]
+        idx = torch.randint(0, pool_size, (n,), device=self._pool.device)
         return self._pool[idx]
         # if self.sampler is not None:
         #     pts = self.sampler(self.data_shape[0])
@@ -95,9 +100,9 @@ class Block:
     def get_losses(self):
         return self.losses
 
-    def refresh_pool(self, size: int = 10000):
+    def refresh_pool(self):
         if self.sampler is not None:
-            pts = self.sampler(size)
+            pts = self.sampler(self._pool_size)
             self._pool = torch.tensor(
                 pts, dtype=torch.float32, device=self._pool.device
             )
@@ -136,6 +141,7 @@ class Block:
         self.out_denorm_scale = out_denorm_scale
         self.out_denorm_shift = out_denorm_shift
         self.sampler = sampler
+        self._pool_size = pool_size
         if self.sampler is not None:
             pts = self.sampler(pool_size)
             self._pool = torch.tensor(pts, dtype=torch.float32, device=device)
@@ -154,18 +160,19 @@ class BaseDecomposition:
 
     def __init__(
         self,
-        overlap: list[float] | tuple[float, ...],
         block_size: list[float] | tuple[float, ...],
         block_scales: list[float],
         block_shift: list[float],
         points_per_block: int = 100,
+        overlap: Optional[list[float] | tuple[float, ...]] = None,
+        kappa: float = 0.2,
+        omega: Optional[float] = None,
+        eps: float = 1e-4,
         device: str = "",
     ):
         """
         Parameters
         ----------
-        overlap: list[float]
-            overlaps per dimension
         block_size: list[float]
             size of blocks per dimension
         block_scales: list[float]
@@ -173,6 +180,15 @@ class BaseDecomposition:
         block_shift: list[float]
             Unnormalization term for blocks per dimension
         points_per_block: int
+        overlap: Optional[list[float]]
+            overlaps per dimension. Mutually exclusive with `kappa`.
+        kappa: float
+            Overlap ratio (delta / B). Mutually exclusive with `overlap`.
+        omega: Optional[float]
+            Sharpness of sigmoid transition. If None, computed like
+            omega = 2 * ln(1 / eps) / (kappa * B).
+        eps: float
+            Numerical threshold for omega calculation
         device: str
             `cpu`/`cuda`/etc.
         """
@@ -180,17 +196,35 @@ class BaseDecomposition:
             device = "cuda" if torch.cuda.is_available() else "cpu"
         self.device = device
 
-        self.overlap = torch.tensor(overlap, dtype=torch.float32)
+        overlap, kappa, omega = resolve_params(
+            block_size=tuple(block_size),
+            eps=eps,
+            overlap=overlap,
+            kappa=kappa,
+            omega=omega,
+        )
+
+        self.overlap = torch.tensor(overlap, dtype=torch.float32, device=device)
+        self._kappa = kappa
+        self.omega = omega
+        self.eps = eps
         self.block_size = block_size
-        self.block_scales = block_scales
-        self.block_shift = block_shift
         self.points_per_block = points_per_block
         self.blocks = []
         self.num_blocks_per_axis: list[int] = []
         self.blocks_per_axis: list[list[Block]] = []
 
+        if isinstance(block_scales, list):
+            block_scales = torch.tensor(
+                block_scales, dtype=torch.float32, device=device
+            )
+        if isinstance(block_shift, list):
+            block_shift = torch.tensor(block_shift, dtype=torch.float32, device=device)
+        self.block_scales = block_scales
+        self.block_shift = block_shift
+
     def get_window_function(
-        self, left_corner, right_corner, omega: float = 30
+        self, left_corner, right_corner
     ) -> Callable[[torch.Tensor], torch.Tensor]:
         def sigmoid(x: torch.Tensor) -> torch.Tensor:
             x_clipped = torch.clip(x, -50.0, 50.0)
@@ -202,15 +236,14 @@ class BaseDecomposition:
         right_corner_tf = torch.tensor(
             right_corner, dtype=torch.float32, device=self.device, requires_grad=False
         )
-        omega = torch.tensor(omega, dtype=torch.float32)
 
         def window_function(x_in: torch.Tensor) -> torch.Tensor:
             """$ w_i(x) = \prod_j^d (\phi((x^j - a_i^j) / \sigma_i^j) \phi((b_i^j - x^j) / \siqma_i^j) ) $"""
             x = x_in  # x (n, d)
             a = left_corner_tf + self.overlap / 2.0
             b = right_corner_tf - self.overlap / 2.0
-            left = sigmoid((x - a) * omega)  # (n, d)
-            right = sigmoid((b - x) * omega)  # (n, d)
+            left = sigmoid((x - a) * self.omega)  # (n, d)
+            right = sigmoid((b - x) * self.omega)  # (n, d)
 
             result = torch.prod(left * right, dim=1, keepdims=True)  # (n, 1)
             return result
@@ -220,6 +253,13 @@ class BaseDecomposition:
     def build_decomposition(self) -> None:
         """
         Method for decompose domain area.
+        Must be implemented in inheritors
+        """
+        raise NotImplementedError
+
+    def remove_redundant_blocks(self, **kwargs) -> None:
+        """
+        Method for remove unnecessary blocks.
         Must be implemented in inheritors
         """
         raise NotImplementedError
@@ -248,14 +288,18 @@ class BaseDecomposition:
             for b in self.blocks
         ]
 
-        self._all_lc = torch.stack(lcs)  # (N_blocks, d)
-        self._all_rc = torch.stack(rcs)  # (N_blocks, d)
+        self._all_lc = torch.stack(lcs).unsqueeze(1)  # (N_blocks, 1, d)
+        self._all_rc = torch.stack(rcs).unsqueeze(1)  # (N_blocks, 1, d)
         ov = torch.tensor(
             self.overlap, dtype=torch.float32, device=self.device, requires_grad=False
         )
-        self._all_ov = ov.unsqueeze(0).expand(len(self.blocks), -1)  # (N_blocks, d)
+        self._all_ov = (
+            ov.unsqueeze(0).expand(len(self.blocks), -1).unsqueeze(1)
+        )  # (N_blocks, 1, d)
+        self._all_a = self._all_lc + self._all_ov / 2.0
+        self._all_b = self._all_rc - self._all_ov / 2.0
 
-    def batched_window(self, x: torch.Tensor, omega: float = 30.0) -> torch.Tensor:
+    def batched_window(self, x: torch.Tensor) -> torch.Tensor:
         """
         Compute window functions for all blocks simultaneously.
 
@@ -263,8 +307,6 @@ class BaseDecomposition:
         ----------
         x : torch.Tensor
             Input points, shape (N_pts, d)
-        omega : float
-            Sharpness of sigmoid transition
 
         Returns
         -------
@@ -273,21 +315,23 @@ class BaseDecomposition:
         """
 
         def sigmoid(x: torch.Tensor) -> torch.Tensor:
-            return torch.clamp(torch.sigmoid(x.clamp(-50.0, 50.0)), min=1e-10)
+            return torch.clamp(torch.sigmoid(x.clamp(-50.0, 50.0)), min=1e-16)
 
         x_exp = x.unsqueeze(0)  # (1, N_pts, d)
-        lc = self._all_lc.unsqueeze(1)  # (N_blocks, 1, d)
-        rc = self._all_rc.unsqueeze(1)  # (N_blocks, 1, d)
-        ov = self._all_ov.unsqueeze(1)  # (N_blocks, 1, d)
 
-        a = lc + ov / 2.0
-        b = rc - ov / 2.0
-        left = sigmoid((x_exp - a) * omega)  # (N_blocks, N_pts, d)
-        right = sigmoid((b - x_exp) * omega)
+        left = sigmoid((x_exp - self._all_a) * self.omega)  # (N_blocks, N_pts, d)
+        right = sigmoid((self._all_b - x_exp) * self.omega)
 
         return (left * right).prod(dim=-1, keepdim=True)  # (N_blocks, N_pts, 1)
-        # log_left = -torch.nn.functional.softplus(-(x_exp - a) * omega)  # (N_blocks, N_pts, d)
-        # log_right = -torch.nn.functional.softplus(-(b - x_exp) * omega)
-        #
-        # log_w = (log_left + log_right).sum(dim=-1, keepdim=True)  # (N_blocks, N_pts, 1)
-        # return torch.exp(log_w)
+
+    def get_config(self) -> dict:
+        return dict(
+            overlap=self.overlap,
+            kappa=self._kappa,
+            block_size=self.block_size,
+            block_scales=self.block_scales,
+            block_shift=self.block_shift,
+            points_per_block=self.points_per_block,
+            omega=self.omega,
+            eps=self.eps,
+        )

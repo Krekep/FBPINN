@@ -72,7 +72,7 @@ class NoObstacleInviscid(PhysLoss):
         self.loss_func = mse_zero
 
     def phys_loss(self, model, x_in, active_models, **kwargs):
-        preds = model(x_in, active_models=active_models)
+        preds = model(x_in, active_indices=active_models)
         p = torch.squeeze(preds[:, 0:1], dim=-1)
         vx = torch.squeeze(preds[:, 1:2], dim=-1)
         vy = torch.squeeze(preds[:, 2:3], dim=-1)
@@ -103,7 +103,7 @@ class NoObstacleInviscid(PhysLoss):
         x = torch.zeros_like(y)
         pts = torch.stack([x, y], dim=1)
 
-        preds = model(pts, active_models=active_models)
+        preds = model(pts, active_indices=active_models)
         p = preds[:, 0:1]
         vx = preds[:, 1:2]
         vy = preds[:, 2:3]
@@ -120,7 +120,7 @@ class NoObstacleInviscid(PhysLoss):
         x = torch.ones_like(y) * self.x_max
         pts = torch.stack([x, y], dim=1)
 
-        preds = model(pts, active_models=active_models)
+        preds = model(pts, active_indices=active_models)
         p = torch.squeeze(preds[:, 0:1], dim=-1)
 
         return self.loss_func(p / self.p_scale)
@@ -132,7 +132,7 @@ class NoObstacleInviscid(PhysLoss):
         pts = torch.stack([x, y], dim=1)
         pts.requires_grad_(True)
 
-        preds = model(pts, active_models=active_models)
+        preds = model(pts, active_indices=active_models)
         vx = preds[:, 1:2]
         vy = preds[:, 2:3]
         p = preds[:, 0:1]
@@ -157,7 +157,7 @@ class NoObstacleInviscid(PhysLoss):
         pts = torch.stack([x, y], dim=1)
         pts.requires_grad_(True)
 
-        preds = model(pts, active_models=active_models)
+        preds = model(pts, active_indices=active_models)
         vx = preds[:, 1:2]
         vy = preds[:, 2:3]
         p = preds[:, 0:1]
@@ -180,6 +180,9 @@ class NoObstacleInviscid(PhysLoss):
         ys = np.linspace(self.y_min, self.y_max, ny, dtype=np.float32)
         xx, yy = np.meshgrid(xs, ys)
         self.val_input = np.stack([xx.ravel(), yy.ravel()], axis=1)  # (N, 2)
+
+    def update(self):
+        pass
 
     def solution(self, x_in: np.ndarray) -> np.ndarray:
         """

@@ -3,7 +3,7 @@ from typing import List, Optional, Dict, Callable
 import torch
 
 from geofbpinn.geometry.decomposition import Block
-from geofbpinn.networks import layer_creator, losses, metrics, optimizers
+from geofbpinn.networks.layers import layer_creator
 
 
 class DenseNet(torch.nn.Module):

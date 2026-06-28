@@ -4,6 +4,8 @@ import numpy as np
 import torch
 import matplotlib
 
+from geofbpinn.networks.embeddings import FourierEmbedding
+
 matplotlib.use("Agg")
 from matplotlib.animation import FuncAnimation, PillowWriter
 from matplotlib import pyplot as plt
@@ -70,13 +72,13 @@ def update_combined(frame):
         scs_e[i].set_array(rel_l1[:, i])
 
 
-model_name = "FBPINN_full_4683"
+model_name = "FBPINN_full_6426"
 torch.manual_seed(42)
 random.seed(42)
 np.random.seed(42)
 CHECKPOINT_DIR = "../checkpoints" + f"/{model_name}"
-LAST_CHECKPOINT = 200_000
-CHECKPOINT_STEP = 5000  # use every k-th checkpoint (sorted by step number)
+LAST_CHECKPOINT = 12_000
+CHECKPOINT_STEP = 1000  # use every k-th checkpoint (sorted by step number)
 POINT_STEP = 10  # subsample 1-in-N points for plotting
 GIF_FPS = 2
 OUTPUT_DIR = "../gifs"
@@ -85,10 +87,10 @@ os.makedirs(OUTPUT_DIR, exist_ok=True)
 device = "cuda" if torch.cuda.is_available() else "cpu"
 print("Torch on cuda:", torch.cuda.is_available())
 domain, hole = prepare_geometry()
-block_size = (0.2, 0.2)
-overlap = (0.07, 0.07)
-bbox_left = (-block_size[0] / 4, -block_size[1] / 4)
-bbox_right = (2000 * scale + block_size[0] / 4, 1200 * scale + block_size[1] / 4)
+block_size = (0.25, 0.25)
+overlap = (0.08, 0.08)
+bbox_left = (-block_size[0] / 4, -block_size[1] / 2)
+bbox_right = (2000 * scale + block_size[0] / 4, 1200 * scale + block_size[1] / 2)
 # block_scales = {"vx": 0.00137, "vy": 0.00142, "pressure": 1.46e-5}
 # block_shifts = {"vx": 0.007, "vy": -3.5e-6, "pressure": -2.93e-6}
 block_scales = {"vx": 0.003505, "vy": 0.00129, "pressure": 1.69e-05}
@@ -125,18 +127,26 @@ dec.remove_redundant_blocks(samples_per_block=4000, tol=0.001, verbose=False)
 plot_decomposition2d(dec.blocks, polygon_vertices=domain, holes=[hole], figsize=(12, 4))
 print(f"Decomposition has {len(dec.blocks)} blocks")
 
+embedding_config = {
+    "input_dim": 2,
+    "output_dim": 8,
+    "n_freqs": 8,
+}
 model_config = {
-    "input_size": 2,
+    "input_size": embedding_config["output_dim"] * 2,
     "output_size": 3,
-    "activation_func": ["tanh", "tanh", "linear"],
-    "models_size": [16, 16],
+    "activation_func": ["tanh", "tanh", "tanh", "linear"],
+    "models_size": [32, 32, 32],
     "device": device,
     "weight": torch.nn.init.xavier_uniform_,
     "biases": torch.nn.init.zeros_,
+    "affected_radius": 3,
 }
 pde = CylinderViscid(cylinder=hole, scale=scale, device=device, path_to_data="../")
 nn = FBPINN(
     **model_config,
+    equation=pde,
+    embedding=FourierEmbedding(**embedding_config),
     physic_loss=pde.phys_loss,
     boundary_loss=pde.sub_losses,
     decomposition=dec,
@@ -157,10 +167,16 @@ for ckpt_num in range(0, LAST_CHECKPOINT, CHECKPOINT_STEP):
     nn.load_weights(path)
     with torch.no_grad():
         pred = nn(x_plot_dev).detach().cpu()
+
+    range_mae = abs(pred - y_plot)
+    for i in range(3):
+        field_range = y_plot[:, i].max() - y_plot[:, i].min()
+        if field_range > 0:
+            range_mae[:, i] /= field_range
     rel_l1 = (
         torch.abs(y_plot - pred) / torch.maximum(torch.abs(y_plot), torch.tensor(1e-8))
     ).numpy()
-    snapshots.append((ckpt_num, pred.numpy(), rel_l1))
+    snapshots.append((ckpt_num, pred.numpy(), range_mae))
 
 p_min = min(
     list(snapshots[i][1][:, 0].min() for i in range(LAST_CHECKPOINT // CHECKPOINT_STEP))
@@ -191,18 +207,24 @@ truth_np = y_plot.numpy()
 writer = PillowWriter(fps=GIF_FPS)
 
 LABELS = ["pressure", "vx", "vy"]
-# fig, axes = plt.subplots(1, 3, figsize=(13, 3.5), tight_layout=True)
-# scs = scatter_grid(axes, xy, [truth_np[:, i] for i in range(3)],
-#                    [f"Predicted {l}" for l in LABELS])
-# add_colorbars(fig, axes, scs)
-# make_gif(fig, axes, update_pred, os.path.join(OUTPUT_DIR, "predictions.gif"))
-#
-# fig, axes = plt.subplots(1, 3, figsize=(13, 3.5), tight_layout=True)
+fig, axes = plt.subplots(1, 3, figsize=(13, 3.5), tight_layout=True)
+scs = scatter_grid(
+    axes, xy, [truth_np[:, i] for i in range(3)], [f"Predicted {l}" for l in LABELS]
+)
+add_colorbars(fig, axes, scs)
+make_gif(fig, axes, update_pred, os.path.join(OUTPUT_DIR, "predictions.gif"))
+
+fig, axes = plt.subplots(1, 3, figsize=(13, 3.5), tight_layout=True)
 _, pred_np, rel_l1_0 = snapshots[0]
-# scs = scatter_grid(axes, xy, [rel_l1_0[:, i] for i in range(3)],
-#                    [f"Rel L1 {l}" for l in LABELS], vranges=(0, 2))
-# add_colorbars(fig, axes, scs)
-# make_gif(fig, axes, update_err, os.path.join(OUTPUT_DIR, "errors.gif"))
+scs = scatter_grid(
+    axes,
+    xy,
+    [rel_l1_0[:, i] for i in range(3)],
+    [f"Rel L1 {l}" for l in LABELS],
+    vranges=[(0, 2)],
+)
+add_colorbars(fig, axes, scs)
+make_gif(fig, axes, update_err, os.path.join(OUTPUT_DIR, "errors.gif"))
 
 fig, axes = plt.subplots(3, 3, figsize=(13, 10))
 scs_p = scatter_grid(
@@ -223,8 +245,8 @@ scs_e = scatter_grid(
     axes[2],
     xy,
     [rel_l1_0[:, i] for i in range(3)],
-    [f"Rel L1 {l}" for l in LABELS],
-    vranges=[(0, 2), (0, 2), (0, 2)],
+    [f"rMAE {l}" for l in LABELS],
+    vranges=[(0, 1), (0, 1), (0, 1)],
 )
 add_colorbars(fig, axes[0], scs_p)
 add_colorbars(fig, axes[1], scs_t)

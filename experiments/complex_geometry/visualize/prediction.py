@@ -1,11 +1,8 @@
 import os
-import re
-import random
+
 import numpy as np
 import torch
 import matplotlib.pyplot as plt
-
-os.environ["KERAS_BACKEND"] = "torch"
 
 from experiments.complex_geometry.cylinder_geometry import prepare_geometry, scale
 from geofbpinn.geometry.polygon_decomposition import Decomposition2DPolygon
@@ -14,35 +11,21 @@ from experiments.complex_geometry.functions.cylinder_viscid import CylinderVisci
 from geofbpinn.networks.topology.fbpinn.model import FBPINN
 
 
-def scatter_grid(axes_row, xy, values_list, titles, vranges):
-    scs = []
-    for ax, val, title, (vmin, vmax) in zip(axes_row, values_list, titles, vranges):
-        sc = ax.scatter(
-            xy[:, 0], xy[:, 1], c=val, cmap="viridis", s=10, vmin=vmin, vmax=vmax
-        )
-        ax.set_title(title)
-        ax.set_xlabel("x")
-        ax.set_ylabel("y")
-        ax.grid(True, linewidth=0.3)
-        scs.append(sc)
-    return scs
-
-
 phys_func = CylinderViscid
-model = "FBPINN_full_5957"
+model = "FBPINN_full_7867"
 CHECKPOINT_DIR = "../checkpoints/" + model
 OUTPUT_DIR = "../predictions"
-POINT_STEP = 10
+POINT_STEP = 2
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 
 device = "cuda" if torch.cuda.is_available() else "cpu"
 print("Torch on cuda:", torch.cuda.is_available())
 
 domain, hole = prepare_geometry()
-block_size = (0.25, 0.25)
-overlap = (0.08, 0.08)
-bbox_left = (-block_size[0] / 2, -block_size[1] / 2)
-bbox_right = (2000 * scale + block_size[0] / 2, 1200 * scale + block_size[1] / 2)
+block_size = (0.4, 0.4)
+overlap = (0.15, 0.15)
+bbox_left = (-block_size[0] / 4, -block_size[1] / 4)
+bbox_right = (2000 * scale + block_size[0] / 4, 1200 * scale + block_size[1] / 4)
 block_scales = {"vx": 0.003505, "vy": 0.00129, "pressure": 1.69e-05}
 block_shifts = {
     "vx": 0.0072,
@@ -73,13 +56,14 @@ dec = Decomposition2DPolygon(
     holes=[hole],
     device=device,
 )
+dec.remove_redundant_blocks(samples_per_block=2000, tol=0.0001, verbose=False)
 print(f"Decomposition has {len(dec.blocks)} blocks")
 
 model_config = {
     "input_size": 2,
     "output_size": 3,
-    "activation_func": ["tanh", "tanh", "tanh", "linear"],
-    "models_size": [24, 24, 24],
+    "activation_func": ["tanh", "tanh", "linear"],
+    "models_size": [64, 64],
     "device": device,
     "weight": torch.nn.init.xavier_uniform_,
     "biases": torch.nn.init.zeros_,
@@ -87,14 +71,15 @@ model_config = {
 pde = phys_func(cylinder=hole, scale=scale, device=device, path_to_data="../")
 nn = FBPINN(
     **model_config,
+    equation=pde,
     physic_loss=pde.phys_loss,
     boundary_loss=pde.sub_losses,
     decomposition=dec,
 )
 nn.to(device)
 
-path_to_ckpt = CHECKPOINT_DIR + "/fbpinn123_2000.weights.h5"
-# path_to_ckpt = CHECKPOINT_DIR + "/fbpinn123_best.weights.h5"
+# path_to_ckpt = CHECKPOINT_DIR + "/fbpinn123_29000.weights.h5"
+path_to_ckpt = CHECKPOINT_DIR + "/fbpinn123_best.weights.h5"
 nn.load_weights(path_to_ckpt)
 nn.eval()
 
@@ -104,134 +89,98 @@ x = torch.tensor(x_np, device=device)
 
 with torch.no_grad():
     pred = nn(x)
-rel_l1 = (
-    (torch.abs(y - pred) / torch.maximum(torch.abs(y), torch.tensor(1e-8)))
-    .cpu()
-    .numpy()
-)
+
 pred_np = pred.cpu().numpy()
 y_np = y.cpu().numpy()
 
-fig, axes = plt.subplots(3, 3, figsize=(18, 14))
-
-vmin_list = []
-vmax_list = []
+range_mae = abs(pred_np - y_np)
 for i in range(3):
-    vmin = min(pred_np[:, i].min(), y_np[:, i].min())
-    vmax = max(pred_np[:, i].max(), y_np[:, i].max())
-    vmin_list.append(vmin)
-    vmax_list.append(vmax)
+    field_range = y_np[:, i].max() - y_np[:, i].min()
+    if field_range > 0:
+        range_mae[:, i] /= field_range
 
 fields = ["pressure", "vx", "vy"]
-scs_pred1 = axes[0, 0].scatter(
-    x_np[:, 0],
-    x_np[:, 1],
-    c=pred_np[:, 0],
-    cmap="viridis",
-    s=10,
-    vmin=vmin_list[0],
-    vmax=vmax_list[0],
-)
-axes[0, 0].set_title(f"Predicted {fields[0]}")
-axes[0, 0].set_xlabel("x")
-axes[0, 0].set_ylabel("y")
-axes[0, 0].grid(True, linewidth=0.3)
-scs_pred2 = axes[0, 1].scatter(
-    x_np[:, 0],
-    x_np[:, 1],
-    c=pred_np[:, 1],
-    cmap="viridis",
-    s=10,
-    vmin=vmin_list[1],
-    vmax=vmax_list[1],
-)
-axes[0, 1].set_title(f"Predicted {fields[1]}")
-axes[0, 1].set_xlabel("x")
-axes[0, 1].set_ylabel("y")
-axes[0, 1].grid(True, linewidth=0.3)
-scs_pred3 = axes[0, 2].scatter(
-    x_np[:, 0],
-    x_np[:, 1],
-    c=pred_np[:, 2],
-    cmap="viridis",
-    s=10,
-    vmin=vmin_list[2],
-    vmax=vmax_list[2],
-)
-axes[0, 2].set_title(f"Predicted {fields[2]}")
-axes[0, 2].set_xlabel("x")
-axes[0, 2].set_ylabel("y")
-axes[0, 2].grid(True, linewidth=0.3)
-scs_true1 = axes[1, 0].scatter(
-    x_np[:, 0],
-    x_np[:, 1],
-    c=y_np[:, 0],
-    cmap="viridis",
-    s=10,
-    vmin=vmin_list[0],
-    vmax=vmax_list[0],
-)
-axes[1, 0].set_title(f"True {fields[0]}")
-axes[1, 0].set_xlabel("x")
-axes[1, 0].set_ylabel("y")
-axes[1, 0].grid(True, linewidth=0.3)
-scs_true2 = axes[1, 1].scatter(
-    x_np[:, 0],
-    x_np[:, 1],
-    c=y_np[:, 1],
-    cmap="viridis",
-    s=10,
-    vmin=vmin_list[1],
-    vmax=vmax_list[1],
-)
-axes[1, 1].set_title(f"True {fields[1]}")
-axes[1, 1].set_xlabel("x")
-axes[1, 1].set_ylabel("y")
-axes[1, 1].grid(True, linewidth=0.3)
-scs_true3 = axes[1, 2].scatter(
-    x_np[:, 0],
-    x_np[:, 1],
-    c=y_np[:, 2],
-    cmap="viridis",
-    s=10,
-    vmin=vmin_list[2],
-    vmax=vmax_list[2],
-)
-axes[1, 2].set_title(f"True {fields[2]}")
-axes[1, 2].set_xlabel("x")
-axes[1, 2].set_ylabel("y")
-axes[1, 2].grid(True, linewidth=0.3)
+field_labels = ["$p'$", "$v_x$", "$v_y$"]
 
-scs_err = axes[2, 0].scatter(
-    x_np[:, 0], x_np[:, 1], c=rel_l1[:, 0], cmap="viridis", s=10, vmin=0, vmax=2
-)
-axes[2, 0].set_title(f"Error {fields[0]}")
-axes[2, 0].set_xlabel("x")
-axes[2, 0].set_ylabel("y")
-axes[2, 0].grid(True, linewidth=0.3)
-axes[2, 1].scatter(
-    x_np[:, 0], x_np[:, 1], c=rel_l1[:, 1], cmap="viridis", s=10, vmin=0, vmax=2
-)
-axes[2, 1].set_title(f"Error {fields[1]}")
-axes[2, 1].set_xlabel("x")
-axes[2, 1].set_ylabel("y")
-axes[2, 1].grid(True, linewidth=0.3)
-axes[2, 2].scatter(
-    x_np[:, 0], x_np[:, 1], c=rel_l1[:, 2], cmap="viridis", s=10, vmin=0, vmax=2
-)
-axes[2, 2].set_title(f"Error {fields[2]}")
-axes[2, 2].set_xlabel("x")
-axes[2, 2].set_ylabel("y")
-axes[2, 2].grid(True, linewidth=0.3)
+for i, (field, label) in enumerate(zip(fields, field_labels)):
+    vmin = min(pred_np[:, i].min(), y_np[:, i].min())
+    vmax = max(pred_np[:, i].max(), y_np[:, i].max())
+    loss_vmax = range_mae[:, i].max()
+    loss_vmin = range_mae[:, i].min()
 
-fig.colorbar(scs_pred1, ax=axes[0, 0], location="right", shrink=0.8, pad=0.05)
-fig.colorbar(scs_pred2, ax=axes[0, 1], location="right", shrink=0.8, pad=0.05)
-fig.colorbar(scs_pred3, ax=axes[0, 2], location="right", shrink=0.8, pad=0.05)
-fig.colorbar(scs_true1, ax=axes[1, 0], location="right", shrink=0.8, pad=0.05)
-fig.colorbar(scs_true2, ax=axes[1, 1], location="right", shrink=0.8, pad=0.05)
-fig.colorbar(scs_true3, ax=axes[1, 2], location="right", shrink=0.8, pad=0.05)
-fig.colorbar(scs_err, ax=axes[2, :], location="right", shrink=0.8, pad=0.05)
+    fig, axes = plt.subplots(1, 3, figsize=(18, 5))
+    fig.suptitle(f"Field: {label}", fontsize=14)
 
-output_path = OUTPUT_DIR + f"/{model}.png"
-plt.savefig(output_path, dpi=450)
-plt.close()
+    sc0 = axes[0].scatter(
+        x_np[:, 0],
+        x_np[:, 1],
+        c=pred_np[:, i],
+        cmap="viridis",
+        s=10,
+        vmin=vmin,
+        vmax=vmax,
+    )
+    axes[0].set_title(f"Predicted {label}")
+    axes[0].set_xlabel("x")
+    axes[0].set_ylabel("y")
+    axes[0].grid(True, linewidth=0.3)
+    fig.colorbar(sc0, ax=axes[0], shrink=0.8, pad=0.05)
+
+    sc1 = axes[1].scatter(
+        x_np[:, 0],
+        x_np[:, 1],
+        c=y_np[:, i],
+        cmap="viridis",
+        s=10,
+        vmin=vmin,
+        vmax=vmax,
+    )
+    axes[1].set_title(f"True {label}")
+    axes[1].set_xlabel("x")
+    axes[1].set_ylabel("y")
+    axes[1].grid(True, linewidth=0.3)
+    fig.colorbar(sc1, ax=axes[1], shrink=0.8, pad=0.05)
+
+    sc2 = axes[2].scatter(
+        x_np[:, 0],
+        x_np[:, 1],
+        c=range_mae[:, i],
+        cmap="viridis",
+        s=10,
+        vmin=0,
+        vmax=loss_vmax,
+    )
+    axes[2].set_title(f"Range MAE {label}")
+    axes[2].set_xlabel("x")
+    axes[2].set_ylabel("y")
+    axes[2].grid(True, linewidth=0.3)
+    fig.colorbar(sc2, ax=axes[2], shrink=0.8, pad=0.05)
+
+    plt.tight_layout()
+    output_path = OUTPUT_DIR + f"/{model}_{field}.png"
+    plt.savefig(output_path, dpi=300)
+    plt.close()
+    print(f"Saved {output_path}, loss_max {loss_vmax}")
+
+print("Losses")
+diff = y_np - pred_np
+abs_diff = np.abs(diff)  # (N, d)
+abs_true = np.abs(y_np)  # (N, d)
+
+val_mse_loss = np.mean(np.square(diff))
+val_mae_loss = np.mean(abs_diff)
+val_l1_loss = np.mean(abs_diff) / np.mean(abs_true)
+
+per_component_mae = abs_diff.mean(axis=0)  # (d,)
+true_range = y_np.max(axis=0) - y_np.min(axis=0)  # (d,)
+per_component_range_mae = per_component_mae / true_range  # (d,)
+val_range_mae = per_component_range_mae.mean()
+
+res = {
+    "Validation MSE loss": val_mse_loss,
+    "Validation MAE loss": val_mae_loss,
+    "Validation Relative L1Loss": val_l1_loss,
+    "Validation Range MAE": val_range_mae,
+}
+for k, v in res.items():
+    print(k, v)

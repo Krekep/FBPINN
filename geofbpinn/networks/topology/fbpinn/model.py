@@ -1,3 +1,4 @@
+import math
 from typing import List, Optional, Callable, Union
 
 import torch
@@ -6,6 +7,7 @@ from geofbpinn.geometry import Block
 from geofbpinn.geometry.base_decomposition import BaseDecomposition
 from geofbpinn.geometry.geometry import polygon_intersects_rectangle
 from geofbpinn.networks import losses, metrics, optimizers, get_activation
+from geofbpinn.networks.embeddings import BaseEmbedding
 from geofbpinn.networks.topology.base.dense import DenseNet
 
 
@@ -21,17 +23,55 @@ class FBPINN(torch.nn.Module):
     https://doi.org/10.1007/s10444-023-10065-9
     """
 
+    @staticmethod
+    def _compute_affected_radius(
+        omega: float,
+        block_size: tuple,
+        eps: float,
+    ) -> int:
+        """
+        Compute affected_radius from decomposition parameters.
+
+        The radius is the minimum number of blocks over which the sigmoid
+        window function decays to eps.
+
+        decay_distance = ln(1 / eps) / omega
+        radius = ceil(decay_distance / block_size)
+
+        Parameters
+        ----------
+        omega : float
+            Sigmoid sharpness from decomposition
+        block_size : tuple
+            Block size per dimension
+        eps : float
+            Numerical threshold from decomposition
+
+        Returns
+        -------
+        int
+            Computed affected radius (at least 1)
+        """
+        decay_distance = math.log(1.0 / eps) / omega
+        r = []
+        for b in block_size:
+            r.append(math.ceil(decay_distance / b))
+        return max(1, min(r))
+
     def __init__(
         self,
         input_size: int,
         output_size: int,
         decomposition: BaseDecomposition,
+        equation,
         physic_loss: Callable,
         boundary_loss: list[tuple[Callable, list[tuple[float, ...]]]],
         activation_func: str | list[str] = "linear",
         weight: Callable = torch.nn.init.normal,
         biases: Callable = torch.nn.init.zeros_,
         models_size: list[int] = [10],
+        affected_radius: Optional[int] = None,
+        embedding: BaseEmbedding = None,
         device: Optional[str] = None,
         **kwargs,
     ) -> None:
@@ -56,6 +96,11 @@ class FBPINN(torch.nn.Module):
             Function for initialize weights of biases
         models_size: list[int]
             Number of neurons per layer for submodel
+        affected_radius : Optional[int]
+            Determines the radius within which the submodel takes points as input.
+            The number of points for which the submodel's output is calculated
+            is equal to the number of `points in the block` * `number of blocks in affected_radius`.
+            If None, automatically computed from decomposition omega, block_size and eps.
         device: Optional[str]
             Device `cpu`/`cuda`
         """
@@ -66,6 +111,22 @@ class FBPINN(torch.nn.Module):
         self.physic_loss: Callable = physic_loss
 
         self.decomposition = decomposition
+        self.equation = equation
+        if embedding is None:
+            embedding = BaseEmbedding(input_dim=input_size, output_dim=input_size)
+        assert (
+            embedding.output_dim == input_size
+        ), f"Output size {embedding.output_dim} of embedding must be equal to input size {input_size} of model"
+        self.embedding = embedding
+        input_dim = embedding.input_dim
+
+        if affected_radius is None:
+            affected_radius = self._compute_affected_radius(
+                omega=self.decomposition.omega,
+                block_size=self.decomposition.block_size,
+                eps=self.decomposition.eps,
+            )
+        self.affected_radius = affected_radius
 
         networks = []
         for i, block in enumerate(self.decomposition.blocks):
@@ -86,6 +147,10 @@ class FBPINN(torch.nn.Module):
         )
         self.input_size = input_size
         self.output_size = output_size
+        # self.block_points = self.decomposition.points_per_block * (3**input_dim)
+        self.block_points = self.decomposition.points_per_block * (
+            (2 * affected_radius + 1) ** input_dim
+        )
 
         # [(Loss, [index Model1, index Model2, ...]), (Other loss, [index Model1, index Model5, ...])]
         self.model_per_loss: list[tuple[Callable, list[int]]] = []
@@ -125,10 +190,12 @@ class FBPINN(torch.nn.Module):
             scales.append(block.out_denorm_scale)
             shifts.append(block.out_denorm_shift)
 
-        self.all_vmins = torch.stack(vmins)
-        self.all_vmaxs = torch.stack(vmaxs)
-        self.all_scales = torch.stack(scales)
-        self.all_shifts = torch.stack(shifts)
+        self.all_vmins = torch.stack(vmins).unsqueeze(1)  # (N, 1, d)
+        self.all_vmaxs = torch.stack(vmaxs).unsqueeze(1)  # (N, 1, d)
+        self.all_scales = torch.stack(scales).unsqueeze(1)  # (N, 1, d)
+        self.all_shifts = torch.stack(shifts).unsqueeze(1)  # (N, 1, d)
+        self.all_inv_scale = 1.0 / (self.all_vmaxs - self.all_vmins)  # (N, d)
+        self.all_shift = -self.all_vmins * self.all_inv_scale  # (N, d)
 
         # TODO: at this moment we consider all submodels is identical in architecture
         ref_nn = self.networks[0]
@@ -231,7 +298,7 @@ class FBPINN(torch.nn.Module):
                 nn.out_layer.w.grad = sw.grad[i]
                 nn.out_layer.b.grad = sb.grad[i]
 
-    def _batched_call(
+    def _batched_call_old(
         self,
         x: torch.Tensor,
         active_mask: Optional[torch.Tensor] = None,
@@ -260,9 +327,13 @@ class FBPINN(torch.nn.Module):
         N_blocks = len(self.blocks)
 
         x_exp = x.unsqueeze(0)  # (1, N_pts, d)
-        vmins = self.all_vmins.unsqueeze(1)  # (N, 1, d)
-        vmaxs = self.all_vmaxs.unsqueeze(1)  # (N, 1, d)
-        x_norm = 2.0 * (x_exp - vmins) / (vmaxs - vmins) - 1.0  # (N, N_pts, d)
+        # vmins = self.all_vmins  # (N, 1, d)
+        # vmaxs = self.all_vmaxs  # (N, 1, d)
+        # x_norm = 2.0 * (x_exp - vmins) / (vmaxs - vmins) - 1.0  # (N, N_pts, d)
+        x_norm = (
+            x_exp * self.all_inv_scale + self.all_shift
+        ) * 2.0 - 1.0  # (N, N_pts, d)
+        x_norm = self.embedding.forward(x_norm)
 
         if active_mask is None:
             outputs = self._manual_forward(self.stacked_w, self.stacked_b, x_norm)
@@ -289,20 +360,117 @@ class FBPINN(torch.nn.Module):
             outputs[active_idx] = active_out
             outputs[inactive_idx] = inactive_out  # (N, N_pts, d)
 
-        scales = self.all_scales.unsqueeze(1)  # (N, 1, d)
-        shifts = self.all_shifts.unsqueeze(1)
+        scales = self.all_scales  # (N, 1, d)
+        shifts = self.all_shifts  # (N, 1, d)
         outputs_phys = outputs * scales + shifts
 
         # with torch.no_grad():
         windows = self.decomposition.batched_window(x).squeeze(-1)  # (N, N_pts)
-        return torch.einsum("bn,bnd->nd", windows, outputs_phys)  # (N_pts, out_d)
+        weight_sum = windows.sum(dim=0, keepdim=False).unsqueeze(-1)  # (N_pts, 1)
+        out = torch.einsum("bn,bnd->nd", windows, outputs_phys)
+        return out / torch.clamp(weight_sum, min=1e-10)
+
+    def _batched_call(
+        self,
+        x: torch.Tensor,
+        active_mask: Optional[torch.Tensor] = None,
+        introduced_mask: Optional[torch.Tensor] = None,
+        eval_call: bool = False,
+    ) -> torch.Tensor:
+        """
+        Evaluate all submodels on the given input and aggregate their outputs.
+
+        Submodels flagged as inactive via `active_mask` are evaluated inside a
+        `torch.no_grad()` context.
+
+        Parameters
+        ----------
+        x: torch.Tensor
+            Input points of shape `(N_pts, d)`.
+        active_mask: torch.Tensor, optional
+            Boolean tensor of shape `(N_blocks,)`.
+            `True` marks submodels that require gradient computation.
+            If `None` or all `True`, all submodels are evaluated with gradients.
+        eval_call: bool
+            If `True`, then the block contribution is calculated on all points,
+            otherwise only on `self.block_points`
+
+        Returns
+        -------
+        torch.Tensor
+            Aggregated output of shape `(N_pts, output_size)`, computed as the
+            weighted sum of windowed submodel outputs.
+        """
+        N_blocks = len(self.blocks)
+        N_pts = x.shape[0]
+        out_d = self.output_size
+
+        windows = self.decomposition.batched_window(x).squeeze(-1)  # (N_blocks, N_pts)
+        if introduced_mask is not None:
+            windows = windows * introduced_mask.unsqueeze(1)
+
+        if eval_call:
+            k = N_pts
+        else:
+            k = min(self.block_points, N_pts)
+        gathered_windows, gather_idx = torch.topk(windows, k=k, dim=1)  # (N_blocks, K)
+
+        x_exp = x.unsqueeze(0).expand(N_blocks, -1, -1)
+        gathered_x = torch.gather(
+            x_exp, 1, gather_idx.unsqueeze(-1).expand(-1, -1, x.shape[-1])
+        )  # (N_blocks, K, d)
+
+        x_norm = (gathered_x * self.all_inv_scale + self.all_shift) * 2.0 - 1.0
+        x_norm = self.embedding.forward(x_norm)
+
+        if active_mask is None:
+            outputs = self._manual_forward(self.stacked_w, self.stacked_b, x_norm)
+        else:
+            active_idx = active_mask.nonzero(as_tuple=True)[0]
+            inactive_idx = (~active_mask).nonzero(as_tuple=True)[0]
+
+            active_w = [sw[active_idx] for sw in self.stacked_w]
+            active_b = [sb[active_idx] for sb in self.stacked_b]
+            active_out = self._manual_forward(active_w, active_b, x_norm[active_idx])
+
+            with torch.no_grad():
+                inact_w = [sw[inactive_idx] for sw in self.stacked_w]
+                inact_b = [sb[inactive_idx] for sb in self.stacked_b]
+                inactive_out = self._manual_forward(
+                    inact_w, inact_b, x_norm[inactive_idx]
+                )
+
+            outputs = torch.empty(N_blocks, k, out_d, device=x.device, dtype=x.dtype)
+            outputs[active_idx] = active_out
+            outputs[inactive_idx] = inactive_out
+
+        scales = self.all_scales  # (N_blocks, 1, d)
+        shifts = self.all_shifts  # (N_blocks, 1, d)
+        outputs_phys = outputs * scales + shifts  # (N_blocks, max_len, out_d)
+
+        weighted_outputs = outputs_phys * gathered_windows.unsqueeze(-1)
+
+        final_out = torch.zeros(N_pts, out_d, device=x.device, dtype=x.dtype)
+        weight_sum = torch.zeros(N_pts, 1, device=x.device, dtype=x.dtype)
+        flat_idx = gather_idx.reshape(-1, 1).expand(
+            -1, out_d
+        )  # (N_blocks * max_len, out_d)
+        flat_weighted = weighted_outputs.reshape(
+            -1, out_d
+        )  # (N_blocks * max_len, out_d)
+
+        final_out.scatter_add_(0, flat_idx, flat_weighted)
+        weight_sum.scatter_add_(
+            0, gather_idx.reshape(-1, 1), gathered_windows.reshape(-1, 1)
+        )
+
+        final_out = final_out / torch.clamp(weight_sum, min=1e-10)
+        return final_out
 
     def custom_compile(
         self,
         rate: float = 1e-2,
         optimizer: str = "SGD",
-        loss_func: str = "MeanSquaredError",
-        metric_funcs: Optional[list[str]] = None,
         run_eagerly: bool = False,
     ) -> None:
         """
@@ -316,22 +484,10 @@ class FBPINN(torch.nn.Module):
             name of optimizer
         inner_loss_func: str
             name of loss function for each network in blocks
-        loss_func: str
-            name of loss function
-        metric_funcs: list[str]
-            list with metric function names
         run_eagerly: bool
             Reserved for future use (Keras compatibility flag)
         """
-        loss = losses.get_loss(loss_func)
-        m = (
-            [metrics.get_metric(metric) for metric in metric_funcs]
-            if metric_funcs is not None
-            else None
-        )
         self.rate_ = rate
-        self.loss_func_ = loss_func
-        self.metric_funcs_ = metric_funcs
         # all_params = [p for nn, _ in self.blocks for p in nn.parameters()]
         all_params = self.stacked_w + self.stacked_b
         self.optimizer = optimizers.get_optimizer(optimizer)(
@@ -342,6 +498,7 @@ class FBPINN(torch.nn.Module):
         self,
         x: torch.Tensor,
         active_indices: Optional[list[int]] = None,
+        introduced_indices: Optional[list[int]] = None,
         **kwargs,
     ):
         """
@@ -352,18 +509,31 @@ class FBPINN(torch.nn.Module):
             Input tensor
         active_indices: Optional[list[int]]
             Indices subset of `self.blocks` from submodels that require gradient calculation.
+        introduced_indices: Optional[list[int]]
+            Train-step call signal.
+            Responsible for the blocks that participate in receiving the model's prediction.
+            Any non-None value includes a `topk` path. Do not pass this for eval/inference.
 
         Returns
         -------
         torch.Tensor
             Predicted output
         """
-        if active_indices is None or len(active_indices) == len(self.blocks):
-            return self._batched_call(x, active_mask=None)
-
-        active_mask = torch.zeros(len(self.blocks), dtype=torch.bool, device=x.device)
-        active_mask[active_indices] = True
-        return self._batched_call(x, active_mask=active_mask)
+        n = len(self.blocks)
+        introduced_mask = None
+        if introduced_indices is not None and len(introduced_indices) != n:
+            introduced_mask = torch.zeros(n, dtype=torch.bool, device=x.device)
+            introduced_mask[introduced_indices] = True
+        if active_indices is None or len(active_indices) == n:
+            active_mask = None if introduced_mask is None else introduced_mask.clone()
+        else:
+            active_mask = torch.zeros(n, dtype=torch.bool, device=x.device)
+            active_mask[active_indices] = True
+        if introduced_indices is None:
+            return self._batched_call(x, active_mask=active_mask, eval_call=True)
+        return self._batched_call(
+            x, active_mask=active_mask, introduced_mask=introduced_mask
+        )
 
     def call(self, x, active_models: list = None, **kwargs):
         """

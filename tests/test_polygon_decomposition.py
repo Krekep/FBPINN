@@ -27,7 +27,7 @@ def make_decomp(
     bbox_left=None,
     bbox_right=None,
     block_size=(2.0, 2.0),
-    overlap=(0.0, 0.0),
+    overlap=(0.1, 0.1),
     block_scales=None,
     block_shift=None,
     points_per_block=20,
@@ -107,10 +107,10 @@ def test_polygon_points_sampler_empty_polygon_returns_zeros():
 @pytest.mark.parametrize(
     "polygon, bbox_left, bbox_right, block_size, overlap, expected_n_blocks",
     [
-        (SQUARE, SQUARE_BBOX_L, SQUARE_BBOX_R, (2.0, 2.0), (0.0, 0.0), 4),
+        (SQUARE, SQUARE_BBOX_L, SQUARE_BBOX_R, (2.0, 2.0), (0.1, 0.1), 9),
         (SQUARE, SQUARE_BBOX_L, SQUARE_BBOX_R, (2.0, 2.0), (0.5, 0.5), 9),
-        (SQUARE, SQUARE_BBOX_L, SQUARE_BBOX_R, (4.0, 4.0), (0.0, 0.0), 1),
-        (TRIANGLE, TRIANGLE_BBOX_L, TRIANGLE_BBOX_R, (2.0, 2.0), (0.0, 0.0), 3),
+        (SQUARE, SQUARE_BBOX_L, SQUARE_BBOX_R, (4.0, 4.0), (0.1, 0.1), 4),
+        (TRIANGLE, TRIANGLE_BBOX_L, TRIANGLE_BBOX_R, (2.0, 2.0), (0.1, 0.1), 6),
     ],
 )
 def test_block_count(
@@ -129,24 +129,32 @@ def test_block_count(
 @pytest.mark.parametrize(
     "polygon, bbox_left, bbox_right, block_size, overlap, holes, expected_area_ratios",
     [
-        (SQUARE, SQUARE_BBOX_L, SQUARE_BBOX_R, (4.0, 4.0), (0.0, 0.0), [], [1.0]),
+        (
+            SQUARE,
+            SQUARE_BBOX_L,
+            SQUARE_BBOX_R,
+            (4.0, 4.0),
+            (0.1, 0.1),
+            [],
+            [1.0, 0.025, 0.025, 0.000625],
+        ),
         (
             SQUARE,
             SQUARE_BBOX_L,
             SQUARE_BBOX_R,
             (2.0, 2.0),
-            (0.0, 0.0),
+            (0.1, 0.1),
             [],
-            [1.0, 1.0, 1.0, 1.0],
+            [1.0, 1.0, 0.1, 1.0, 1.0, 0.1, 0.1, 0.1, 0.01],
         ),
         (
             TRIANGLE,
             TRIANGLE_BBOX_L,
             TRIANGLE_BBOX_R,
             (2.0, 2.0),
-            (0.0, 0.0),
+            (0.1, 0.1),
             [],
-            [1.0, 0.5, 0.5],
+            [1.0, 0.54875, 0.005, 0.54875, 0.005, 0.005],
         ),
     ],
 )
@@ -174,18 +182,18 @@ def test_block_area_ratio(
             SQUARE_BBOX_L,
             SQUARE_BBOX_R,
             (2.0, 2.0),
-            (0.0, 0.0),
+            (0.1, 0.1),
             [],
-            [0, 0, 0, 0],
+            [0, 0, 0, 0, 0, 0, 0, 0, 0],
         ),
         (
             SQUARE,
             SQUARE_BBOX_L,
             SQUARE_BBOX_R,
             (4.0, 4.0),
-            (0.0, 0.0),
+            (0.1, 0.1),
             SQUARE_HOLE,
-            [1],
+            [1, 0, 0, 0],
         ),
     ],
 )
@@ -209,7 +217,7 @@ def test_clipped_polygon_vertices_inside_original():
         bbox_left=TRIANGLE_BBOX_L,
         bbox_right=TRIANGLE_BBOX_R,
         block_size=(2.0, 2.0),
-        overlap=(0.0, 0.0),
+        overlap=(0.1, 0.1),
     )
     poly_arr = np.array(TRIANGLE)
     for block in d.blocks:
@@ -264,10 +272,10 @@ def test_denorm_propagated_to_all_blocks(scales, shifts):
 @pytest.mark.parametrize(
     "block_size, overlap, expected_remaining",
     [
-        ((2.0, 2.0), (0.0, 0.0), 4),
+        ((2.0, 2.0), (0.1, 0.1), 9),
     ],
 )
-def test_remove_redundant_no_overlap_keeps_all(block_size, overlap, expected_remaining):
+def test_remove_redundant_keeps_all(block_size, overlap, expected_remaining):
     d = make_decomp(block_size=block_size, overlap=overlap)
     d.remove_redundant_blocks(samples_per_block=100, tol=0.01, verbose=False)
     assert len(d.blocks) == expected_remaining

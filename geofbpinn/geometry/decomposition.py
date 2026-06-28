@@ -1,3 +1,5 @@
+from typing import Optional
+
 import torch
 
 from geofbpinn.geometry.base_decomposition import (
@@ -17,19 +19,20 @@ class DecompositionND(BaseDecomposition):
         domain: RectangleDomain,
         bbox_left: list[float],
         bbox_right: list[float],
-        overlap: list[float],
         block_size: list[float],
         block_scales: list[float],
         block_shift: list[float],
         points_per_block: int = 100,
+        overlap: Optional[list[float]] = None,
+        kappa: float = 0.3,
+        omega: Optional[float] = None,
+        eps: float = 1e-4,
         device: str = "",
     ) -> None:
         """
         Parameters
         ----------
         domain: RectangleDomain
-        overlap: list[float]
-            overlaps per dimension
         bbox_left: list[float]
             Left lower corner of bounding n-d rectangle
         bbox_right: list[float]
@@ -41,11 +44,27 @@ class DecompositionND(BaseDecomposition):
         block_shift: list[float]
             Unnormalization term for blocks per dimension
         points_per_block: int
+        overlap: Optional[list[float]]
+            overlaps per dimension. Mutually exclusive with `kappa`.
+        kappa: float
+            Overlap ratio (delta / B). Mutually exclusive with `overlap`.
+        omega: Optional[float]
+            Sharpness of sigmoid transition. If None, auto-calculated.
+        eps: float
+            Numerical threshold for omega calculation.
         device: str
             `cpu`/`cuda`/etc.
         """
         super().__init__(
-            overlap, block_size, block_scales, block_shift, points_per_block, device
+            block_size=block_size,
+            block_scales=block_scales,
+            block_shift=block_shift,
+            points_per_block=points_per_block,
+            overlap=overlap,
+            kappa=kappa,
+            omega=omega,
+            eps=eps,
+            device=device,
         )
         self.domain = domain
         self.bbox_left = bbox_left
@@ -56,7 +75,7 @@ class DecompositionND(BaseDecomposition):
             last = bbox_left[i] + block_size[i]
             while last < bbox_right[i]:
                 number_of_blocks += 1
-                last = last - overlap[i] + block_size[i]
+                last = last - self.overlap[i].item() + block_size[i]
             self.num_blocks_per_axis.append(number_of_blocks)
 
         self.build_decomposition()
@@ -93,12 +112,13 @@ class DecompositionND(BaseDecomposition):
             for j in range(n):
                 curr_id = current_idx[j]  # offset in axis
                 lc = (
-                    self.bbox_left[j] + (self.block_size[j] - self.overlap[j]) * curr_id
+                    self.bbox_left[j]
+                    + (self.block_size[j] - self.overlap[j].item()) * curr_id
                 )
                 rc = (
                     self.bbox_left[j]
                     + self.block_size[j]
-                    + (self.block_size[j] - self.overlap[j]) * curr_id
+                    + (self.block_size[j] - self.overlap[j].item()) * curr_id
                 )
 
                 left_corner.append(lc)
@@ -107,12 +127,13 @@ class DecompositionND(BaseDecomposition):
                 left_corner[
                     -1
                 ] = (  # in current axis we move only last boundary of block
-                    self.bbox_left[-1] + (self.block_size[-1] - self.overlap[-1]) * i
+                    self.bbox_left[-1]
+                    + (self.block_size[-1] - self.overlap[-1].item()) * i
                 )
                 right_corner[-1] = (
                     self.bbox_left[-1]
                     + self.block_size[-1]
-                    + (self.block_size[-1] - self.overlap[-1]) * i
+                    + (self.block_size[-1] - self.overlap[-1].item()) * i
                 )
                 lc_list = left_corner.copy()
                 rc_list = right_corner.copy()
@@ -124,13 +145,13 @@ class DecompositionND(BaseDecomposition):
                     min(a, b) for a, b in zip(rc_list, self.domain.right_up_corner)
                 ]
                 size = [self.points_per_block] + [len(lc_list)]
-                sampler = lambda n: torch.rand(
-                    [n] + [len(lc_list)], device=self.device
-                ) * (
-                    torch.tensor(data_rc, device=self.device)
-                    - torch.tensor(data_lc, device=self.device)
+                sampler = lambda n, lc=tuple(lc_list), rc=tuple(data_rc), lc_val=tuple(
+                    data_lc
+                ): torch.rand([n] + [len(lc)], device=self.device) * (
+                    torch.tensor(rc, device=self.device)
+                    - torch.tensor(lc_val, device=self.device)
                 ) + torch.tensor(
-                    data_lc, device=self.device
+                    lc_val, device=self.device
                 )
                 block = Block(
                     data_shape=size,
@@ -141,6 +162,7 @@ class DecompositionND(BaseDecomposition):
                     out_denorm_shift=self.block_shift,
                     sampler=sampler,
                     device=self.device,
+                    pool_size=max(10_000, self.points_per_block),
                 )
                 self.blocks.append(block)
                 self.blocks_per_axis[-1].append(block)
@@ -150,3 +172,17 @@ class DecompositionND(BaseDecomposition):
                 self._build_decomposition(current_ax + 1, current_idx, n)
                 current_idx[current_ax] += 1
             current_idx[current_ax] = 0
+
+    def remove_redundant_blocks(self, **kwargs) -> None:
+        pass
+
+    def get_config(self) -> dict:
+        cfg = super().get_config()
+        cfg.update(
+            blocks_per_axis=self.blocks_per_axis,
+            domain=self.domain,
+            bbox_left=self.bbox_left,
+            bbox_right=self.bbox_right,
+            num_blocks_per_axis=self.num_blocks_per_axis,
+        )
+        return cfg

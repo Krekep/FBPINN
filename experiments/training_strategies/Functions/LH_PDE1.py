@@ -26,6 +26,9 @@ class LH_PDE1(PhysLoss):
         super().__init__(description)
 
         # nn(t, x) -> y
+        self.boundary_loss_1 = torch.compile(self.boundary_loss_1, dynamic=True)
+        self.boundary_loss_3 = torch.compile(self.boundary_loss_3, dynamic=True)
+        self.boundary_loss_4 = torch.compile(self.boundary_loss_4, dynamic=True)
         self.full_losses = [self.phys_loss]
         self.sub_losses = [
             (self.boundary_loss_1, [(0.0, 0.0), (0.0, 1.0)]),  # u(0, x)
@@ -38,7 +41,7 @@ class LH_PDE1(PhysLoss):
 
     def phys_loss(self, model: torch.nn.Module, x_in, active_models, **kwargs):
         """d^2u/dt^2 - 4 * d^2u/dx^2 = 0"""
-        u = model(x_in, active_models=active_models)
+        u = model(x_in, active_indices=active_models)
 
         u_grad = torch.autograd.grad(u.sum(), x_in, create_graph=True)[0]
         u_t, u_x = u_grad[:, 0], u_grad[:, 1]
@@ -71,7 +74,7 @@ class LH_PDE1(PhysLoss):
         t = torch.zeros_like(x_wout_t)
         x = torch.stack([t, x_wout_t], dim=1).requires_grad_(True)
 
-        u_model = model(x, active_models=active_models)
+        u_model = model(x, active_indices=active_models)
         u_t = torch.autograd.grad(u_model.sum(), x, create_graph=True)[0][:, 0]
 
         return torch.mean(torch.square(u_t))
@@ -82,7 +85,7 @@ class LH_PDE1(PhysLoss):
         x_zeros = torch.zeros_like(t_wout_x)
         x = torch.stack([t_wout_x, x_zeros], dim=1)
 
-        u_model = model(x, active_models=active_models)
+        u_model = model(x, active_indices=active_models)
 
         return torch.mean(torch.square(u_model))
 
@@ -92,7 +95,7 @@ class LH_PDE1(PhysLoss):
         x_ones = torch.ones_like(t_wout_x)
         x = torch.stack([t_wout_x, x_ones], dim=1)
 
-        u_model = model(x, active_models=active_models)
+        u_model = model(x, active_indices=active_models)
         return torch.mean(torch.square(u_model))
 
     def _build_data(self, nt: int, nx: int):
@@ -102,6 +105,9 @@ class LH_PDE1(PhysLoss):
         tt = torch.tensor(tt.ravel(), device=self.device, requires_grad=False)
         xx = torch.tensor(xx.ravel(), device=self.device, requires_grad=False)
         self.val_input = torch.stack([tt, xx], dim=1)
+
+    def update(self):
+        pass
 
     def solution(self, x_in):
         t = x_in[:, 0:1]

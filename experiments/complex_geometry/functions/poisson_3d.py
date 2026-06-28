@@ -96,7 +96,7 @@ class Poisson3D(PhysLoss):
         )  # (N, 3)
 
     def phys_loss(self, model: torch.nn.Module, x_in, active_models, **kwargs):
-        preds = model(x_in, active_models=active_models)
+        preds = model(x_in, active_indices=active_models)
         u = preds[:, 0]  # (n,)
 
         du = torch.autograd.grad(u.sum(), x_in, create_graph=True, retain_graph=True)[0]
@@ -132,7 +132,7 @@ class Poisson3D(PhysLoss):
         coords[fixed_axis] = torch.full_like(coords[fixed_axis], fixed_val)
         x = torch.stack(coords, dim=1)
 
-        preds = model(x, active_models=active_models)
+        preds = model(x, active_indices=active_models)
         u = preds[:, 0]
 
         return self.loss_func(u / self.u_scale)
@@ -172,6 +172,9 @@ class Poisson3D(PhysLoss):
         return self._bc_loss(
             model, x_in, active_models, fixed_axis=2, fixed_val=self.z_max
         )
+
+    def update(self):
+        pass
 
     def solution(self, inp):
         if isinstance(inp, np.ndarray):

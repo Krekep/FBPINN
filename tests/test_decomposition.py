@@ -22,6 +22,7 @@ def make_decomp(
     block_scales=None,
     block_shift=None,
     points_per_block=10,
+    omega=None,
     device="cpu",
 ):
     n = len(bbox_left)
@@ -33,11 +34,12 @@ def make_decomp(
         domain=domain,
         bbox_left=bbox_left,
         bbox_right=bbox_right,
-        overlap=overlap,
         block_size=block_size,
         block_scales=block_scales or [1.0] * n,
         block_shift=block_shift or [0.0] * n,
         points_per_block=points_per_block,
+        overlap=overlap,
+        omega=omega,
         device=device,
     )
 
@@ -153,12 +155,12 @@ def test_block_set_losses(lc, rc, loss_var_bounds, expected_count):
 @pytest.mark.parametrize(
     "bbox_left, bbox_right, block_size, overlap, expected",
     [
-        ([0.0], [1.0], [0.5], [0.0], [2]),
+        ([0.0], [1.0], [0.5], [0.05], [3]),
         ([0.0], [1.0], [0.5], [0.1], [3]),
-        ([0.0], [1.0], [1.0], [0.0], [1]),
-        ([0.0], [1.0], [2.0], [0.0], [1]),
-        ([0.0, 0.0], [1.0, 2.0], [0.5, 0.5], [0.0, 0.0], [2, 4]),
-        ([0.0, 0.0], [1.0, 1.0], [0.6, 0.6], [0.2, 0.2], [2, 2]),
+        ([0.0], [1.0], [1.0], [0.1], [1]),
+        ([0.0], [1.0], [2.0], [0.1], [1]),
+        ([0.0, 0.0], [1.0, 2.0], [0.5, 0.5], [0.05, 0.05], [3, 5]),
+        ([0.0, 0.0], [0.9, 0.9], [0.6, 0.6], [0.2, 0.2], [2, 2]),
     ],
 )
 def test_num_blocks_per_axis(bbox_left, bbox_right, block_size, overlap, expected):
@@ -169,10 +171,10 @@ def test_num_blocks_per_axis(bbox_left, bbox_right, block_size, overlap, expecte
 @pytest.mark.parametrize(
     "bbox_left, bbox_right, block_size, overlap",
     [
-        ([0.0], [1.0], [0.5], [0.0]),
+        ([0.0], [1.0], [0.5], [0.05]),
         ([0.0], [1.0], [0.5], [0.1]),
-        ([0.0], [1.0], [1.0], [0.0]),
-        ([0.0, 0.0], [1.0, 2.0], [0.5, 0.5], [0.0, 0.0]),
+        ([0.0], [1.0], [1.0], [0.1]),
+        ([0.0, 0.0], [1.0, 2.0], [0.5, 0.5], [0.05, 0.05]),
         ([0.0, 0.0], [1.0, 1.0], [0.6, 0.6], [0.2, 0.2]),
     ],
 )
@@ -185,8 +187,8 @@ def test_total_block_count(bbox_left, bbox_right, block_size, overlap):
 @pytest.mark.parametrize(
     "bbox_left, bbox_right, block_size, overlap",
     [
-        ([0.0], [1.0], [0.5], [0.0]),
-        ([0.0, 0.0], [1.0, 2.0], [0.5, 0.5], [0.0, 0.0]),
+        ([0.0], [1.0], [0.5], [0.05]),
+        ([0.0, 0.0], [1.0, 2.0], [0.5, 0.5], [0.05, 0.05]),
         ([0.0, 0.0], [1.0, 1.0], [0.6, 0.6], [0.2, 0.2]),
     ],
 )
@@ -206,9 +208,9 @@ def test_blocks_per_axis_structure(bbox_left, bbox_right, block_size, overlap):
 @pytest.mark.parametrize(
     "bbox_left, bbox_right, block_size, overlap",
     [
-        ([0.0], [1.0], [0.5], [0.0]),
+        ([0.0], [1.0], [0.5], [0.05]),
         ([0.0], [1.0], [0.5], [0.1]),
-        ([0.0, 0.0], [1.0, 2.0], [0.5, 0.5], [0.0, 0.0]),
+        ([0.0, 0.0], [1.0, 2.0], [0.5, 0.5], [0.05, 0.05]),
     ],
 )
 def test_block_corners_in_range(bbox_left, bbox_right, block_size, overlap):
@@ -225,8 +227,8 @@ def test_block_corners_in_range(bbox_left, bbox_right, block_size, overlap):
 @pytest.mark.parametrize(
     "bbox_left, bbox_right, block_size, overlap, points_per_block",
     [
-        ([0.0], [1.0], [0.5], [0.0], 16),
-        ([0.0, 0.0], [1.0, 1.0], [0.5, 0.5], [0.0, 0.0], 8),
+        ([0.0], [1.0], [0.5], [0.05], 16),
+        ([0.0, 0.0], [1.0, 1.0], [0.5, 0.5], [0.05, 0.05], 8),
     ],
 )
 def test_decomp_get_data_shape(
@@ -243,8 +245,8 @@ def test_decomp_get_data_shape(
 @pytest.mark.parametrize(
     "bbox_left, bbox_right, block_size, overlap, n_pts",
     [
-        ([0.0], [1.0], [0.5], [0.0], 20),
-        ([0.0, 0.0], [1.0, 1.0], [0.5, 0.5], [0.0, 0.0], 30),
+        ([0.0], [1.0], [0.5], [0.05], 20),
+        ([0.0, 0.0], [1.0, 1.0], [0.5, 0.5], [0.05, 0.05], 30),
     ],
 )
 def test_window_function_shape_and_positive(
@@ -262,8 +264,8 @@ def test_window_function_shape_and_positive(
 @pytest.mark.parametrize(
     "bbox_left, bbox_right, block_size, overlap, n_pts",
     [
-        ([0.0], [1.0], [0.5], [0.0], 15),
-        ([0.0, 0.0], [1.0, 1.0], [0.5, 0.5], [0.0, 0.0], 25),
+        ([0.0], [1.0], [0.5], [0.05], 15),
+        ([0.0, 0.0], [1.0, 1.0], [0.5, 0.5], [0.05, 0.05], 25),
     ],
 )
 def test_batched_window_shape(bbox_left, bbox_right, block_size, overlap, n_pts):
@@ -277,8 +279,8 @@ def test_batched_window_shape(bbox_left, bbox_right, block_size, overlap, n_pts)
 @pytest.mark.parametrize(
     "bbox_left, bbox_right, block_size, overlap",
     [
-        ([0.0], [1.0], [1.0], [0.0]),
-        ([0.0, 0.0], [1.0, 1.0], [1.0, 1.0], [0.0, 0.0]),
+        ([0.0], [1.0], [1.0], [0.1]),
+        ([0.0, 0.0], [1.0, 1.0], [1.0, 1.0], [0.1, 0.1]),
     ],
 )
 def test_window_center_larger_than_edge(bbox_left, bbox_right, block_size, overlap):
@@ -297,8 +299,8 @@ def test_window_center_larger_than_edge(bbox_left, bbox_right, block_size, overl
 @pytest.mark.parametrize(
     "bbox_left, bbox_right, block_size, overlap, scales, shifts",
     [
-        ([0.0], [1.0], [0.5], [0.0], [2.0], [1.0]),
-        ([0.0, 0.0], [1.0, 1.0], [0.5, 0.5], [0.0, 0.0], [3.0, 0.5], [-1.0, 2.0]),
+        ([0.0], [1.0], [0.5], [0.05], [2.0], [1.0]),
+        ([0.0, 0.0], [1.0, 1.0], [0.5, 0.5], [0.05, 0.05], [3.0, 0.5], [-1.0, 2.0]),
     ],
 )
 def test_block_denorm_scale_shift_stored(
@@ -315,3 +317,57 @@ def test_block_denorm_scale_shift_stored(
     for block in d.blocks:
         assert block.out_denorm_scale == scales
         assert block.out_denorm_shift == shifts
+
+
+@pytest.mark.parametrize(
+    "x_coord, expected_b0, expected_b1",
+    [
+        (0.5, 0.8176, 0.1824),
+        (0.25, 0.9525, 0.0001),
+        (0.75, 0.0025, 0.9951),
+        (-1.0, 0.0000, 0.0000),
+    ],
+)
+def test_batched_window_specific_values_1d(x_coord, expected_b0, expected_b1):
+    d = make_decomp(
+        bbox_left=[0.0],
+        bbox_right=[1.0],
+        block_size=[0.7],
+        overlap=[0.3],
+        omega=30.0,
+    )
+    d.prepare_batched()
+    d.blocks = sorted(d.blocks, key=lambda b: b.left_down_corner[0])
+    assert len(d.blocks) == 2
+
+    # (N_pts, d) -> (1, 1)
+    x = torch.tensor([[x_coord]], dtype=torch.float32, device=d.device)
+
+    w = d.batched_window(x)  # (N_blocks, N_pts, 1)
+
+    actual_b0 = w[0, 0, 0].item()
+    actual_b1 = w[1, 0, 0].item()
+
+    assert actual_b0 == pytest.approx(expected_b0, abs=1e-4)
+    assert actual_b1 == pytest.approx(expected_b1, abs=1e-4)
+
+
+@pytest.mark.parametrize(
+    "bbox_left, bbox_right, block_size, overlap, margin",
+    [
+        ([0.0], [1.0], [0.5], [0.1], 0.15),
+        ([0.0], [1.0], [0.3], [0.08], 0.1),
+        ([0.0, 0.0], [1.0, 1.0], [0.5, 0.5], [0.1, 0.1], 0.15),
+    ],
+)
+def test_batched_window_partition_of_unity(
+    bbox_left, bbox_right, block_size, overlap, margin
+):
+    d = make_decomp(bbox_left, bbox_right, block_size, overlap)
+    n = len(bbox_left)
+    lo = torch.tensor([l + margin for l in bbox_left])
+    hi = torch.tensor([r - margin for r in bbox_right])
+    x = torch.rand(500, n) * (hi - lo) + lo
+    w = d.batched_window(x)  # (N_blocks, N_pts, 1)
+    w_sum = w.sum(dim=0).squeeze(-1)
+    assert torch.allclose(w_sum, torch.ones_like(w_sum), atol=1e-3)

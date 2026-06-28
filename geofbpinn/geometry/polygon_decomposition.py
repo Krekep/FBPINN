@@ -97,8 +97,11 @@ class Decomposition2DPolygon(BaseDecomposition):
         block_scales: list[float],
         block_shift: list[float],
         block_size: Tuple[float, float],
-        overlap: Tuple[float, float],
         points_per_block: int = 200,
+        overlap: Optional[Tuple[float, float]] = None,
+        kappa: float = 0.3,
+        omega: Optional[float] = None,
+        eps: float = 1e-4,
         holes: Optional[List[List[Tuple[float, float]]]] = None,
         eps_full: float = 1e-6,
         device: str = "",
@@ -112,15 +115,21 @@ class Decomposition2DPolygon(BaseDecomposition):
             Left lower corner of bounding rectangle
         bbox_right: Tuple[float, float]
             Right upper corner of bounding rectangle
-        overlap: list[float]
-            overlaps per dimension
-        block_size: list[float]
-            size of blocks per dimension
         block_scales: list[float]
             Unnormalization multiplier for blocks per dimension
         block_shift: list[float]
             Unnormalization term for blocks per dimension
+        block_size: Tuple[float, float]
+            size of blocks per dimension
         points_per_block: int
+        overlap: Optional[Tuple[float, float]]
+            overlaps per dimension. Mutually exclusive with `kappa`.
+        kappa: Optional[float]
+            Overlap ratio (delta / B). Mutually exclusive with `overlap`.
+        omega: Optional[float]
+            Sharpness of sigmoid transition. If None, auto-calculated.
+        eps: float
+            Numerical threshold for omega calculation.
         holes: Optional[List[List[Tuple[float, float]]]]
             List of holes in domain
         eps_full: float
@@ -129,7 +138,15 @@ class Decomposition2DPolygon(BaseDecomposition):
             `cpu`/`cuda`/etc.
         """
         super().__init__(
-            overlap, block_size, block_scales, block_shift, points_per_block, device
+            block_size=block_size,
+            block_scales=block_scales,
+            block_shift=block_shift,
+            points_per_block=points_per_block,
+            overlap=overlap,
+            kappa=kappa,
+            omega=omega,
+            eps=eps,
+            device=device,
         )
         self.polygon = polygon_vertices
         self.holes = holes if holes is not None else []
@@ -200,6 +217,7 @@ class Decomposition2DPolygon(BaseDecomposition):
                         self.block_shift,
                         sampler,
                         self.device,
+                        max(10_000, self.points_per_block),
                     )
                     wrapper = PolygonBlock(
                         block_args=block_args,
@@ -342,3 +360,14 @@ class Decomposition2DPolygon(BaseDecomposition):
 
         if verbose:
             print(f"Removed {removed} redundant blocks, remaining {len(self.blocks)}")
+
+    def get_config(self) -> dict:
+        cfg = super().get_config()
+        cfg.update(
+            polygon_vertices=self.polygon,
+            holes=self.holes,
+            bbox_left=self.bbox_left,
+            bbox_right=self.bbox_right,
+            eps_full=self.eps_full,
+        )
+        return cfg

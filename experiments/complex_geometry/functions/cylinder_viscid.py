@@ -41,6 +41,7 @@ class CylinderViscid(PhysLoss):
         self.equation_class = "Navier-Stokes (viscous) 2D"
         self.time_input = False
         self.cylinder = cylinder
+        self.device = device
 
         self.R = 100 * scale  # m
         self.rho = torch.tensor(rho, dtype=torch.float32)  # kg/m^3
@@ -67,6 +68,36 @@ class CylinderViscid(PhysLoss):
             sample_points_on_boundary(self.cylinder, [], 2000),
             device=device,
             dtype=torch.float32,
+        )
+        self.boundary_points_1 = torch.tensor(
+            sample_points_on_boundary(
+                [(self.x_min, self.y_min), (self.x_min, self.y_max)], [], 2000
+            ),
+            device=device,
+            dtype=torch.float32,
+        )
+        self.boundary_points_2 = torch.tensor(
+            sample_points_on_boundary(
+                [(self.x_max, self.y_min), (self.x_max, self.y_max)], [], 2000
+            ),
+            device=device,
+            dtype=torch.float32,
+        )
+        self.boundary_points_3 = torch.tensor(
+            sample_points_on_boundary(
+                [(self.x_min, self.y_max), (self.x_max, self.y_max)], [], 2000
+            ),
+            device=device,
+            dtype=torch.float32,
+            requires_grad=True,
+        )
+        self.boundary_points_4 = torch.tensor(
+            sample_points_on_boundary(
+                [(self.x_min, self.y_min), (self.x_max, self.y_min)], [], 2000
+            ),
+            device=device,
+            dtype=torch.float32,
+            requires_grad=True,
         )
 
         self.boundary_loss_cylinder = torch.compile(
@@ -99,8 +130,12 @@ class CylinderViscid(PhysLoss):
         ]
         self.loss_func = mse_zero
 
-    def phys_loss(self, model: torch.nn.Module, x_in, active_models, **kwargs):
-        preds = model(x_in, active_models=active_models)
+    def phys_loss(
+        self, model: torch.nn.Module, x_in, active_models, introduced_models, **kwargs
+    ):
+        preds = model(
+            x_in, active_indices=active_models, introduced_indices=introduced_models
+        )
         p = preds[:, 0]  # (n,)
         vx = preds[:, 1]
         vy = preds[:, 2]
@@ -109,27 +144,33 @@ class CylinderViscid(PhysLoss):
         dvx = torch.autograd.grad(vx.sum(), x_in, create_graph=True, retain_graph=True)[
             0
         ]
-        dvy = torch.autograd.grad(vy.sum(), x_in, create_graph=True)[0]
+        dvy = torch.autograd.grad(vy.sum(), x_in, create_graph=True, retain_graph=True)[
+            0
+        ]
         dp_dx, dp_dy = dp[:, 0], dp[:, 1]  # Pa/m
         dvx_dx, dvx_dy = dvx[:, 0], dvx[:, 1]  # 1/s
         dvy_dx, dvy_dy = dvy[:, 0], dvy[:, 1]  # 1/s
 
-        # d2vx_dx2 = torch.autograd.grad(dvx_dx.sum(), x_in, create_graph=True)[0][:, 0]  # 1/(m*s)
-        # d2vx_dy2 = torch.autograd.grad(dvx_dy.sum(), x_in, create_graph=True)[0][:, 1]  # 1/(m*s)
-        # d2vy_dx2 = torch.autograd.grad(dvy_dx.sum(), x_in, create_graph=True)[0][:, 0]  # 1/(m*s)
-        # d2vy_dy2 = torch.autograd.grad(dvy_dy.sum(), x_in, create_graph=True)[0][:, 1]  # 1/(m*s)
-
-        lap_vx_input = dvx[:, 0].sum() + dvx[:, 1].sum()
-        d2vx = torch.autograd.grad(
-            lap_vx_input, x_in, create_graph=True, retain_graph=True
-        )[0]
-        d2vx_dx2 = d2vx[:, 0]
-        d2vx_dy2 = d2vx[:, 1]
-
-        lap_vy_input = dvy[:, 0].sum() + dvy[:, 1].sum()
-        d2vy = torch.autograd.grad(lap_vy_input, x_in, create_graph=True)[0]
-        d2vy_dx2 = d2vy[:, 0]
-        d2vy_dy2 = d2vy[:, 1]
+        d2vx_dx2 = torch.autograd.grad(
+            dvx_dx.sum(), x_in, create_graph=True, retain_graph=True
+        )[0][
+            :, 0
+        ]  # 1/(m*s)
+        d2vx_dy2 = torch.autograd.grad(
+            dvx_dy.sum(), x_in, create_graph=True, retain_graph=True
+        )[0][
+            :, 1
+        ]  # 1/(m*s)
+        d2vy_dx2 = torch.autograd.grad(
+            dvy_dx.sum(), x_in, create_graph=True, retain_graph=True
+        )[0][
+            :, 0
+        ]  # 1/(m*s)
+        d2vy_dy2 = torch.autograd.grad(
+            dvy_dy.sum(), x_in, create_graph=True, retain_graph=True
+        )[0][
+            :, 1
+        ]  # 1/(m*s)
 
         # Лапласианы скоростей: nu * lap(v) [m/s^2]
         lap_vx = self.nu * (d2vx_dx2 + d2vx_dy2)
@@ -147,13 +188,15 @@ class CylinderViscid(PhysLoss):
         phys_loss = loss_continuity + loss_mx + loss_my
         return phys_loss
 
-    def boundary_loss_1(self, model: torch.nn.Module, x_in, active_models, **kwargs):
+    def boundary_loss_1(
+        self, model: torch.nn.Module, x_in, active_models, introduced_models, **kwargs
+    ):
         """v_x(0.0, y) = 0.0075, v_y(0.0, y) = 0, p'(0.0, y) = 0"""
-        y_wout_x = x_in[:, 1]
-        x = torch.zeros_like(y_wout_x)
-        x = torch.stack([x, y_wout_x], dim=1)
+        x = self.boundary_points_1
 
-        preds = model(x, active_models=active_models)
+        preds = model(
+            x, active_models=active_models, introduced_indices=introduced_models
+        )
         p = preds[:, 0:1]  # (n,1)
         vx = preds[:, 1:2]
         vy = preds[:, 2:3]
@@ -167,24 +210,28 @@ class CylinderViscid(PhysLoss):
         )
         return b_loss
 
-    def boundary_loss_2(self, model: torch.nn.Module, x_in, active_models, **kwargs):
+    def boundary_loss_2(
+        self, model: torch.nn.Module, x_in, introduced_models, active_models, **kwargs
+    ):
         """p'(2.0, y) = 0"""
-        y_wout_x = x_in[:, 1]
-        x = torch.ones_like(y_wout_x) * (2000 * self.scale)
-        x = torch.stack([x, y_wout_x], dim=1)
+        x = self.boundary_points_2
 
-        preds = model(x, active_models=active_models)
+        preds = model(
+            x, active_models=active_models, introduced_indices=introduced_models
+        )
         p = torch.squeeze(preds[:, 0:1])  # (n,)
         b_loss = self.loss_func(p / self.p_scale)
         return b_loss
 
-    def boundary_loss_3(self, model: torch.nn.Module, x_in, active_models, **kwargs):
+    def boundary_loss_3(
+        self, model: torch.nn.Module, x_in, active_models, introduced_models, **kwargs
+    ):
         """(y=1.2): v_y = 0, ∂v_x/∂y = 0, ∂p'/∂y = 0"""
-        x_wout_y = x_in[:, 0]
-        y = torch.ones_like(x_wout_y) * self.y_max
-        x = torch.stack([x_wout_y, y], dim=1)
+        x = self.boundary_points_3
 
-        preds = model(x, active_models=active_models)
+        preds = model(
+            x, active_indices=active_models, introduced_indices=introduced_models
+        )
         vx = preds[:, 1:2]
         vy = preds[:, 2:3]
         p = preds[:, 0:1]
@@ -192,9 +239,9 @@ class CylinderViscid(PhysLoss):
         dvx_dy = torch.autograd.grad(
             vx, x, torch.ones_like(vx), create_graph=True, retain_graph=True
         )[0][:, 1:2]
-        dp_dy = torch.autograd.grad(p, x, torch.ones_like(p), create_graph=True)[0][
-            :, 1:2
-        ]
+        dp_dy = torch.autograd.grad(
+            p, x, torch.ones_like(p), create_graph=True, retain_graph=True
+        )[0][:, 1:2]
 
         b_loss = (
             self.loss_func(vy / self.v_inf)
@@ -205,22 +252,24 @@ class CylinderViscid(PhysLoss):
         )
         return b_loss
 
-    def boundary_loss_4(self, model: torch.nn.Module, x_in, active_models, **kwargs):
+    def boundary_loss_4(
+        self, model: torch.nn.Module, x_in, active_models, introduced_models, **kwargs
+    ):
         """(y=0): v_y = 0, ∂v_x/∂y = 0, ∂p'/∂y = 0"""
-        x_wout_y = x_in[:, 0]
-        y = torch.zeros_like(x_wout_y)
-        x = torch.stack([x_wout_y, y], dim=1)
+        x = self.boundary_points_4
 
-        preds = model(x, active_models=active_models)
+        preds = model(
+            x, active_indices=active_models, introduced_indices=introduced_models
+        )
         vx = preds[:, 1:2]
         vy = preds[:, 2:3]
         p = preds[:, 0:1]
         dvx_dy = torch.autograd.grad(
             vx, x, torch.ones_like(vx), create_graph=True, retain_graph=True
         )[0][:, 1:2]
-        dp_dy = torch.autograd.grad(p, x, torch.ones_like(p), create_graph=True)[0][
-            :, 1:2
-        ]
+        dp_dy = torch.autograd.grad(
+            p, x, torch.ones_like(p), create_graph=True, retain_graph=True
+        )[0][:, 1:2]
 
         b_loss = (
             self.loss_func(vy / self.v_inf)
@@ -232,12 +281,14 @@ class CylinderViscid(PhysLoss):
         return b_loss
 
     def boundary_loss_cylinder(
-        self, model: torch.nn.Module, x_in, active_models, **kwargs
+        self, model: torch.nn.Module, x_in, active_models, introduced_models, **kwargs
     ):
         """v_x = 0, v_y = 0 (условие прилипания — no-slip)"""
         x_in = self.cylinder_points
 
-        preds = model(x_in, active_models=active_models)
+        preds = model(
+            x_in, active_indices=active_models, introduced_indices=introduced_models
+        )
         vx = preds[:, 1]  # (n,)
         vy = preds[:, 2]  # (n,)
 
@@ -277,6 +328,13 @@ class CylinderViscid(PhysLoss):
         assert max(self.val_input[:, 0]) <= 2000 * self.scale  # x coord
         assert min(self.val_input[:, 1]) >= 0.0
         assert min(self.val_input[:, 1]) <= 1200 * self.scale
+
+    def update(self):
+        self.cylinder_points = torch.tensor(
+            sample_points_on_boundary(self.cylinder, [], 2000),
+            device=self.device,
+            dtype=torch.float32,
+        )
 
     def solution(self, inp):
         res = []

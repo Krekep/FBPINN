@@ -1,68 +1,54 @@
 import os
+import numpy as np
 import torch
-from utils import patch_env_var
-
-patch_env_var.patch()
-torch.backends.cuda.matmul.allow_tf32 = True
-torch.backends.cudnn.allow_tf32 = True
-
+import mlflow
 import random
 
-from experiments.complex_geometry.cylinder_geometry import prepare_geometry, scale
-from geofbpinn.geometry.plot import plot_decomposition2d
-from geofbpinn.geometry.polygon_decomposition import Decomposition2DPolygon
-from geofbpinn.networks.schedulers.layer import (
-    BaseLayerScheduler,
-    TwoStepLayerScheduler,
+from experiments.complex_geometry.utils.flat_dict import flatten_dict
+from geofbpinn.utils.get_classes import (
+    get_layer_scheduler,
+    get_loss_scheduler,
+    get_lr_scheduler,
+    get_embedding,
+    get_decomposition,
 )
-from geofbpinn.networks.schedulers.loss import AdaptiveLossScheduler, LossScheduler
+from experiments.complex_geometry.cylinder_geometry import scale
+from geofbpinn.geometry.base_decomposition import BaseDecomposition
+from geofbpinn.geometry.plot import plot_decomposition2d
 from geofbpinn.networks.topology.fbpinn.model import FBPINN
 from functions.cylinder_viscid import CylinderViscid
 from geofbpinn.networks.topology.fbpinn.trainer import train_fbpinn
-from geofbpinn.networks.schedulers.lr import WarmupReduceLROnPlateau
-import mlflow
+from cfg.decomposition_config import domain, hole, decomposition_config
+from cfg.env_config import env_config
+from cfg.model_config import compile_config, embedding_config, model_config
+from cfg.train_config import scheduler_config, train_config
+from geofbpinn.utils.checkpoint import save_checkpoint
 
-print("Torch on cuda", torch.cuda.is_available())
-
-device = "cuda" if torch.cuda.is_available() else "cpu"
-epochs = 200_000
-domain, hole = prepare_geometry()
-v_inf = 0.0075
-block_size = (0.2, 0.2)
-overlap = (0.07, 0.07)
-bbox_left = (-block_size[0] / 4, -block_size[1] / 4)
-bbox_right = (2000 * scale + block_size[0] / 4, 1200 * scale + block_size[1] / 4)
-points_per_block = 100
-eps_full = 1e-3
-lr = 1e-4
-block_scales = {"vx": 0.003505, "vy": 0.00129, "pressure": 1.69e-05}
-block_shifts = {
-    "vx": 0.0072,
-    "vy": -1.9e-06,
-    "pressure": -7.9e-06,
+configs = {
+    "decomposition": decomposition_config,
+    "train": train_config,
+    "model": model_config,
+    "embedding": embedding_config,
+    "env": env_config,
+    "compile": compile_config,
+    "scheduler": scheduler_config,
 }
-output_scale = torch.tensor(
-    [block_scales["pressure"], block_scales["vx"], block_scales["vy"]],
-    device=device,
-    requires_grad=False,
-)
-output_shift = torch.tensor(
-    [block_shifts["pressure"], block_shifts["vx"], block_shifts["vy"]],
-    device=device,
-    requires_grad=False,
-)
 
-dec = Decomposition2DPolygon(
-    polygon_vertices=domain,
-    bbox_left=bbox_left,
-    bbox_right=bbox_right,
-    block_scales=output_scale,
-    block_shift=output_shift,
-    block_size=block_size,
-    overlap=overlap,
-    points_per_block=points_per_block,
-    eps_full=eps_full,
-    holes=[hole],
+run_id = random.randint(1, 10000)
+torch.manual_seed(env_config["random_seed"])
+random.seed(env_config["random_seed"])
+np.random.seed(env_config["random_seed"])
+
+device = env_config["device"]
+if device == "cuda":
+    torch.cuda.manual_seed(env_config["random_seed"])
+    torch.cuda.manual_seed_all(env_config["random_seed"])
+    torch.backends.cudnn.deterministic = True
+    torch.backends.cudnn.benchmark = False
+
+v_inf = 0.0075
+dec: BaseDecomposition = get_decomposition(env_config["Decomposition"])(
+    **decomposition_config,
     device=device,
 )
 dec.remove_redundant_blocks(samples_per_block=2000, tol=0.0001, verbose=False)
@@ -73,50 +59,37 @@ plot_decomposition2d(
     figsize=(12, 4),
 )
 print(f"Decomposition has {len(dec.blocks)} blocks")
-
-model_config = {
-    "input_size": 2,
-    "output_size": 3,
-    "activation_func": ["tanh", "tanh", "linear"],
-    "models_size": [16, 16],
-    "device": device,
-    "weight": torch.nn.init.xavier_uniform_,
-    "biases": torch.nn.init.zeros_,
-}
+configs["decomposition"] = dec.get_config()
 
 pde = CylinderViscid(cylinder=hole, scale=scale, v_inf=v_inf, device=device)
 phys_loss = pde.phys_loss
 which = pde.description
 
-mlflow.set_experiment("FBPINN Viscid Cylinder")
-run_id = random.randint(1, 10000)
-run_name = f"FBPINN_full_{run_id}"
+mlflow.set_experiment(env_config["experiment_name"])
+
+run_name = f"{env_config['model_name']}_{run_id}"
 mlflow.start_run(run_name=run_name, log_system_metrics=True)
 mlflow.set_tag("Training Info", f"FBPINN model for {which}")
 mlflow.set_tag("Class", pde.equation_class)
-mlflow.log_param("left_bound", bbox_left)
-mlflow.log_param("right_bound", bbox_right)
-mlflow.log_param("leaning_rate", lr)
-mlflow.log_param("Block scales", block_scales)
-mlflow.log_param("Block shifts", block_shifts)
-mlflow.log_param("Block size", block_size)
-mlflow.log_param("overlap", overlap)
 mlflow.log_param("v_inf", v_inf)
-mlflow.log_param("points_per_block", points_per_block)
-mlflow.log_params(model_config)
+mlflow.log_params(flatten_dict(configs))
+mlflow.log_param("decomposition_omega", dec.omega)
+mlflow.log_param("decomposition_overlap", dec.overlap)
 os.makedirs(f"./checkpoints/{run_name}", exist_ok=True)
 logdir = f"./logs/{run_name}"
 
+embedding = get_embedding(env_config["embedding"])(**embedding_config)
 nn = FBPINN(
     **model_config,
+    equation=pde,
+    embedding=embedding,
     physic_loss=phys_loss,
     boundary_loss=pde.sub_losses,
     decomposition=dec,
+    device=device,
 )
 nn.to(device)
-nn.custom_compile(
-    optimizer="AdamW", rate=lr, loss_func="RelativeL1Loss", run_eagerly=False
-)
+nn.custom_compile(**compile_config)
 mlflow.log_param("Number of submodels", len(nn.blocks))
 mlflow.log_param("Num blocks per axis", nn.decomposition.num_blocks_per_axis)
 mlflow.log_param("Blocks per axis", list(map(len, nn.decomposition.blocks_per_axis)))
@@ -131,12 +104,13 @@ loss_before_train = nn.evaluate(x, y, verbose=0)
 
 layer_scheduler_config = {
     "n": len(nn.blocks),
-    "first": (0, sum(b_per_a[0 : len(b_per_a) // 2 + 2])),
-    "second": (sum(b_per_a[0 : len(b_per_a) // 2]), len(nn.blocks)),
-    "step": epochs // 2,
+    # "first": (0, sum(b_per_a) // 2 + b_per_a[-1]),
+    # "second": (sum(b_per_a) // 2 - b_per_a[-1], sum(b_per_a)),
+    # "step": 60000
 }
-layer_scheduler = TwoStepLayerScheduler(**layer_scheduler_config)
-mlflow.log_param("Layer scheduler", "TwoStepLayerScheduler")
+layer_scheduler = get_layer_scheduler(env_config["layer_scheduler"])(
+    **layer_scheduler_config
+)
 mlflow.log_params(layer_scheduler_config)
 
 loss_scheduler_config = {
@@ -144,30 +118,19 @@ loss_scheduler_config = {
     "boundary_indices": list(range(len(pde.sub_losses))),
     "loss_weights": [10, 1, 1, 1, 1, 100],
 }
-loss_scheduler = LossScheduler(**loss_scheduler_config)
-mlflow.log_param("Loss scheduler", "LossScheduler")
+loss_scheduler = get_loss_scheduler(env_config["loss_scheduler"])(
+    **loss_scheduler_config
+)
 mlflow.log_params(loss_scheduler_config)
 
-train_config = {
-    "epochs": epochs,
-    "start_epoch": 0,
-    "patience": 4_000_000,
-    "eval_interval": 100,
-    "log_interval": 1000,
-    "mode": "layer",
-    "layer_scheduler": layer_scheduler,
-    "loss_scheduler": loss_scheduler,
-    "path_to_ckpt": f"./checkpoints/{run_name}",
-}
-mlflow.log_params(train_config)
-scheduler = WarmupReduceLROnPlateau(
-    nn.optimizer,
-    mode="min",
-    factor=0.8,
-    patience=50,
-    warmup_epochs=10,
-    warmup_start_factor=0.1,
-)
+train_config["layer_scheduler"] = layer_scheduler
+train_config["loss_scheduler"] = loss_scheduler
+train_config["path_to_ckpt"] = f"./checkpoints/{run_name}"
+scheduler = None
+if env_config["scheduler"] is not None:
+    scheduler = get_lr_scheduler(env_config["scheduler"])(
+        nn.optimizer, **scheduler_config
+    )
 train_fbpinn(
     **train_config,
     fbpinn=nn,
@@ -176,7 +139,15 @@ train_fbpinn(
     val_input=x,
     png_salt=str("123"),
     lr_scheduler=scheduler,
+    configs=configs,
 )
-nn.save_weights(f"./checkpoints/{run_name}/cyclinder_1_layer.weights.h5")
+save_checkpoint(
+    nn,
+    f"./checkpoints/{run_name}/last.weights.h5",
+    configs,
+    nn.optimizer,
+    scheduler,
+    train_config["epochs"],
+)
 
 mlflow.end_run()

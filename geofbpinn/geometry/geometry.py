@@ -279,7 +279,7 @@ def point_on_segment(
     dist_bp = dist(b, p)
     dist_ab = dist(a, b)
 
-    return math.isclose(dist_ap + dist_bp, dist_ab)
+    return math.isclose(dist_ap + dist_bp, dist_ab, abs_tol=1e-6)
 
 
 def point_on_polygon_edge(

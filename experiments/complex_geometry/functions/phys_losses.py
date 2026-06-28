@@ -5,3 +5,9 @@ class PhysLoss:
         self.sub_losses: list[
             tuple[callable, list[list[float]]]
         ] = []  # on subdomain (e.g. u(0, x) = sin(x))
+
+    def update(self):
+        pass
+
+    def solution(self, **kwargs):
+        pass

@@ -40,7 +40,7 @@ def plot_decomposition2d(
         Title of plot
     """
     fig, ax = plt.subplots(figsize=figsize)
-    ax.set_aspect("equal", adjustable="box")
+    # ax.set_aspect("equal", adjustable="box")
 
     poly_np = np.array(polygon_vertices)
     if poly_np.ndim == 2 and poly_np.shape[0] > 0:

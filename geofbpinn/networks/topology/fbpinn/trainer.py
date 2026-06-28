@@ -22,6 +22,7 @@ def train_fbpinn(
     loss_scheduler: LossScheduler = None,
     path_to_ckpt: str = "",
     lr_scheduler=None,
+    configs: dict = None,
 ):
     """
     Interface for different training strategies.
@@ -57,6 +58,8 @@ def train_fbpinn(
         Path to checkpoint
     lr_scheduler:
         Learning rate scheduler
+    configs: dict
+        Model configs
     """
     if callbacks is None:
         callbacks = []
@@ -82,6 +85,7 @@ def train_fbpinn(
             loss_scheduler=loss_scheduler,
             path_to_ckpt=path_to_ckpt,
             lr_scheduler=lr_scheduler,
+            configs=configs,
         )
     else:
         raise ValueError("Unsupported train mode")

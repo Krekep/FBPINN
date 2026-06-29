@@ -271,6 +271,20 @@ class FBPINN(torch.nn.Module):
 
         return out  # (N, N_pts, output_size)
 
+    def _scatter_weights(self) -> None:
+        """
+        Keep model state dict actual
+        """
+        n_hidden = len(self.networks[0].blocks)
+        for layer_idx in range(n_hidden):
+            for i, (nn, _) in enumerate(self.blocks):
+                nn.blocks[layer_idx].w.data = self.stacked_w[layer_idx][i].data
+                nn.blocks[layer_idx].b.data = self.stacked_b[layer_idx][i].data
+        for i, (nn, _) in enumerate(self.blocks):
+            nn.out_layer.w.data = self.stacked_w[-1][i].data
+            nn.out_layer.b.data = self.stacked_b[-1][i].data
+        self._scatter_gradients()
+
     def _scatter_gradients(self) -> None:
         """
         In order for optimizer to correctly update the model weights,
@@ -297,78 +311,6 @@ class FBPINN(torch.nn.Module):
             for i, (nn, _) in enumerate(self.blocks):
                 nn.out_layer.w.grad = sw.grad[i]
                 nn.out_layer.b.grad = sb.grad[i]
-
-    def _batched_call_old(
-        self,
-        x: torch.Tensor,
-        active_mask: Optional[torch.Tensor] = None,
-    ) -> torch.Tensor:
-        """
-        Evaluate all submodels on the given input and aggregate their outputs.
-
-        Submodels flagged as inactive via `active_mask` are evaluated inside a
-        `torch.no_grad()` context.
-
-        Parameters
-        ----------
-        x: torch.Tensor
-            Input points of shape `(N_pts, d)`.
-        active_mask: torch.Tensor, optional
-            Boolean tensor of shape `(N_blocks,)`.
-            `True` marks submodels that require gradient computation.
-            If `None` or all `True`, all submodels are evaluated with gradients.
-
-        Returns
-        -------
-        torch.Tensor
-            Aggregated output of shape `(N_pts, output_size)`, computed as the
-            weighted sum of windowed submodel outputs.
-        """
-        N_blocks = len(self.blocks)
-
-        x_exp = x.unsqueeze(0)  # (1, N_pts, d)
-        # vmins = self.all_vmins  # (N, 1, d)
-        # vmaxs = self.all_vmaxs  # (N, 1, d)
-        # x_norm = 2.0 * (x_exp - vmins) / (vmaxs - vmins) - 1.0  # (N, N_pts, d)
-        x_norm = (
-            x_exp * self.all_inv_scale + self.all_shift
-        ) * 2.0 - 1.0  # (N, N_pts, d)
-        x_norm = self.embedding.forward(x_norm)
-
-        if active_mask is None:
-            outputs = self._manual_forward(self.stacked_w, self.stacked_b, x_norm)
-        else:
-            active_idx = active_mask.nonzero(as_tuple=True)[0]
-            inactive_idx = (~active_mask).nonzero(as_tuple=True)[0]
-
-            active_w = [sw[active_idx] for sw in self.stacked_w]
-            active_b = [sb[active_idx] for sb in self.stacked_b]
-            active_out = self._manual_forward(active_w, active_b, x_norm[active_idx])
-
-            with torch.no_grad():
-                inact_w = [sw[inactive_idx] for sw in self.stacked_w]
-                inact_b = [sb[inactive_idx] for sb in self.stacked_b]
-                inactive_out = self._manual_forward(
-                    inact_w, inact_b, x_norm[inactive_idx]
-                )
-
-            outputs_list = [None] * N_blocks
-            N_pts = x.shape[0]
-            outputs = torch.empty(
-                N_blocks, N_pts, self.output_size, device=x.device, dtype=x.dtype
-            )
-            outputs[active_idx] = active_out
-            outputs[inactive_idx] = inactive_out  # (N, N_pts, d)
-
-        scales = self.all_scales  # (N, 1, d)
-        shifts = self.all_shifts  # (N, 1, d)
-        outputs_phys = outputs * scales + shifts
-
-        # with torch.no_grad():
-        windows = self.decomposition.batched_window(x).squeeze(-1)  # (N, N_pts)
-        weight_sum = windows.sum(dim=0, keepdim=False).unsqueeze(-1)  # (N_pts, 1)
-        out = torch.einsum("bn,bnd->nd", windows, outputs_phys)
-        return out / torch.clamp(weight_sum, min=1e-10)
 
     def _batched_call(
         self,
@@ -575,15 +517,7 @@ class FBPINN(torch.nn.Module):
         path: str
             File path
         """
-        n_hidden = len(self.networks[0].blocks)
-        for layer_idx in range(n_hidden):
-            for i, (nn, _) in enumerate(self.blocks):
-                nn.blocks[layer_idx].w.data = self.stacked_w[layer_idx][i].data
-                nn.blocks[layer_idx].b.data = self.stacked_b[layer_idx][i].data
-        for i, (nn, _) in enumerate(self.blocks):
-            nn.out_layer.w.data = self.stacked_w[-1][i].data
-            nn.out_layer.b.data = self.stacked_b[-1][i].data
-        self._scatter_gradients()
+        self._scatter_weights()
         torch.save(self.state_dict(), path)
 
     def load_weights(self, path: str) -> None:

@@ -65,27 +65,27 @@ class CylinderViscid(PhysLoss):
         self._load_dataset(path_to_data + "cylinder_viscid.csv")
 
         self.cylinder_points = torch.tensor(
-            sample_points_on_boundary(self.cylinder, [], 2000),
+            sample_points_on_boundary(self.cylinder, [], 4000),
             device=device,
             dtype=torch.float32,
         )
         self.boundary_points_1 = torch.tensor(
             sample_points_on_boundary(
-                [(self.x_min, self.y_min), (self.x_min, self.y_max)], [], 2000
+                [(self.x_min, self.y_min), (self.x_min, self.y_max)], [], 4000
             ),
             device=device,
             dtype=torch.float32,
         )
         self.boundary_points_2 = torch.tensor(
             sample_points_on_boundary(
-                [(self.x_max, self.y_min), (self.x_max, self.y_max)], [], 2000
+                [(self.x_max, self.y_min), (self.x_max, self.y_max)], [], 4000
             ),
             device=device,
             dtype=torch.float32,
         )
         self.boundary_points_3 = torch.tensor(
             sample_points_on_boundary(
-                [(self.x_min, self.y_max), (self.x_max, self.y_max)], [], 2000
+                [(self.x_min, self.y_max), (self.x_max, self.y_max)], [], 4000
             ),
             device=device,
             dtype=torch.float32,
@@ -93,7 +93,7 @@ class CylinderViscid(PhysLoss):
         )
         self.boundary_points_4 = torch.tensor(
             sample_points_on_boundary(
-                [(self.x_min, self.y_min), (self.x_max, self.y_min)], [], 2000
+                [(self.x_min, self.y_min), (self.x_max, self.y_min)], [], 4000
             ),
             device=device,
             dtype=torch.float32,

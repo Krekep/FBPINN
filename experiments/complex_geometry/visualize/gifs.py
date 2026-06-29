@@ -5,6 +5,7 @@ import torch
 import matplotlib
 
 from geofbpinn.networks.embeddings import FourierEmbedding
+from geofbpinn.utils.checkpoint import load_checkpoint
 
 matplotlib.use("Agg")
 from matplotlib.animation import FuncAnimation, PillowWriter
@@ -72,12 +73,12 @@ def update_combined(frame):
         scs_e[i].set_array(rel_l1[:, i])
 
 
-model_name = "FBPINN_full_6426"
+model_name = "FBPINN_full_746"
 torch.manual_seed(42)
 random.seed(42)
 np.random.seed(42)
 CHECKPOINT_DIR = "../checkpoints" + f"/{model_name}"
-LAST_CHECKPOINT = 12_000
+LAST_CHECKPOINT = 10_000
 CHECKPOINT_STEP = 1000  # use every k-th checkpoint (sorted by step number)
 POINT_STEP = 10  # subsample 1-in-N points for plotting
 GIF_FPS = 2
@@ -87,71 +88,14 @@ os.makedirs(OUTPUT_DIR, exist_ok=True)
 device = "cuda" if torch.cuda.is_available() else "cpu"
 print("Torch on cuda:", torch.cuda.is_available())
 domain, hole = prepare_geometry()
-block_size = (0.25, 0.25)
-overlap = (0.08, 0.08)
-bbox_left = (-block_size[0] / 4, -block_size[1] / 2)
-bbox_right = (2000 * scale + block_size[0] / 4, 1200 * scale + block_size[1] / 2)
-# block_scales = {"vx": 0.00137, "vy": 0.00142, "pressure": 1.46e-5}
-# block_shifts = {"vx": 0.007, "vy": -3.5e-6, "pressure": -2.93e-6}
-block_scales = {"vx": 0.003505, "vy": 0.00129, "pressure": 1.69e-05}
-block_shifts = {
-    "vx": 0.0072,
-    "vy": -1.9e-06,
-    "pressure": -7.9e-06,
-}
-output_scale = torch.tensor(
-    [block_scales["pressure"], block_scales["vx"], block_scales["vy"]],
-    device=device,
-    requires_grad=False,
-)
-output_shift = torch.tensor(
-    [block_shifts["pressure"], block_shifts["vx"], block_shifts["vy"]],
-    device=device,
-    requires_grad=False,
-)
+pde = CylinderViscid(cylinder=hole, scale=scale, device=device, path_to_data="../")
+first_ckpt_path = CHECKPOINT_DIR + "/fbpinn123_0.weights.h5"
+nn, _, _, _ = load_checkpoint(first_ckpt_path, pde, device=device)
 
-dec = Decomposition2DPolygon(
-    polygon_vertices=domain,
-    bbox_left=bbox_left,
-    bbox_right=bbox_right,
-    block_scales=output_scale,
-    block_shift=output_shift,
-    block_size=block_size,
-    overlap=overlap,
-    points_per_block=10,
-    eps_full=1e-3,
-    holes=[hole],
-    device=device,
-)
+dec = nn.decomposition
 dec.remove_redundant_blocks(samples_per_block=4000, tol=0.001, verbose=False)
 plot_decomposition2d(dec.blocks, polygon_vertices=domain, holes=[hole], figsize=(12, 4))
 print(f"Decomposition has {len(dec.blocks)} blocks")
-
-embedding_config = {
-    "input_dim": 2,
-    "output_dim": 8,
-    "n_freqs": 8,
-}
-model_config = {
-    "input_size": embedding_config["output_dim"] * 2,
-    "output_size": 3,
-    "activation_func": ["tanh", "tanh", "tanh", "linear"],
-    "models_size": [32, 32, 32],
-    "device": device,
-    "weight": torch.nn.init.xavier_uniform_,
-    "biases": torch.nn.init.zeros_,
-    "affected_radius": 3,
-}
-pde = CylinderViscid(cylinder=hole, scale=scale, device=device, path_to_data="../")
-nn = FBPINN(
-    **model_config,
-    equation=pde,
-    embedding=FourierEmbedding(**embedding_config),
-    physic_loss=pde.phys_loss,
-    boundary_loss=pde.sub_losses,
-    decomposition=dec,
-)
-nn.to(device)
 
 x_all = pde.val_input
 y_all = torch.tensor(pde.solution(x_all), device=device)
@@ -164,7 +108,7 @@ nn.eval()
 snapshots = []  # list of (step_num, pred_np, rel_l1_np)
 for ckpt_num in range(0, LAST_CHECKPOINT, CHECKPOINT_STEP):
     path = CHECKPOINT_DIR + f"/fbpinn123_{ckpt_num}.weights.h5"
-    nn.load_weights(path)
+    nn, _, _, _ = load_checkpoint(path, pde, device=device)
     with torch.no_grad():
         pred = nn(x_plot_dev).detach().cpu()
 

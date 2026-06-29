@@ -8,7 +8,10 @@ from geofbpinn.utils.get_classes import (
 )
 
 
-def save_checkpoint(model, path, configs, optimizer, scheduler, epoch):
+def save_checkpoint(
+    model: FBPINN, path: str, configs: dict, optimizer, scheduler, epoch: int
+):
+    model._scatter_weights()
     checkpoint = {
         "model_state_dict": model.state_dict(),
         "configs": configs,
@@ -21,7 +24,7 @@ def save_checkpoint(model, path, configs, optimizer, scheduler, epoch):
     torch.save(checkpoint, path)
 
 
-def load_checkpoint(path, pde, device="cpu"):
+def load_checkpoint(path: str, pde, device="cpu"):
     """
     This function reconstructs the FBPINN model, its optimizer, and the learning
     rate scheduler exactly as they were at the time of saving. It also restores
@@ -77,6 +80,7 @@ def load_checkpoint(path, pde, device="cpu"):
     nn.to(device)
     nn.custom_compile(**compile_cfg)
     nn.load_state_dict(checkpoint["model_state_dict"])
+    nn._sync_stacked_params()
     if "optimizer_state_dict" in checkpoint:
         nn.optimizer.load_state_dict(checkpoint["optimizer_state_dict"])
     scheduler = None

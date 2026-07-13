@@ -62,7 +62,7 @@ def load_checkpoint(path: str, pde, device="cpu"):
     compile_cfg = configs["compile"]
     train_cfg = configs["train"]
 
-    scheduler_cfg = configs.get("scheduler", {})  # может отсутствовать
+    scheduler_cfg = configs.get("scheduler", {})
 
     dec = get_decomposition(env_cfg["Decomposition"])(**decomp_cfg, device=device)
     dec.remove_redundant_blocks(samples_per_block=2000, tol=0.0001, verbose=False)

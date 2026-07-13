@@ -6,6 +6,7 @@ import numpy.typing as npt
 import torch
 
 from geofbpinn.geometry.auto_params import resolve_params
+from geofbpinn.geometry.window_functions import get_window_fn, prod_last_dim
 
 
 class RectangleDomain:
@@ -163,6 +164,7 @@ class BaseDecomposition:
         block_size: list[float] | tuple[float, ...],
         block_scales: list[float],
         block_shift: list[float],
+        window_fn_type: str = "sigmoid",
         points_per_block: int = 100,
         overlap: Optional[list[float] | tuple[float, ...]] = None,
         kappa: float = 0.2,
@@ -179,6 +181,8 @@ class BaseDecomposition:
             Unnormalization multiplier for blocks per dimension
         block_shift: list[float]
             Unnormalization term for blocks per dimension
+        window_fn_type: str
+            Name of window function. Look at `networks.utils.get_classes.get_window_fn`
         points_per_block: int
         overlap: Optional[list[float]]
             overlaps per dimension. Mutually exclusive with `kappa`.
@@ -208,6 +212,8 @@ class BaseDecomposition:
         self._kappa = kappa
         self.omega = omega
         self.eps = eps
+        self.window_function_type = window_fn_type
+        self.window_function = get_window_fn(window_fn_type)(self.overlap, eps, omega)
         self.block_size = block_size
         self.points_per_block = points_per_block
         self.blocks = []
@@ -226,10 +232,6 @@ class BaseDecomposition:
     def get_window_function(
         self, left_corner, right_corner
     ) -> Callable[[torch.Tensor], torch.Tensor]:
-        def sigmoid(x: torch.Tensor) -> torch.Tensor:
-            x_clipped = torch.clip(x, -50.0, 50.0)
-            return torch.maximum(1 / (1 + torch.exp(-x_clipped)), torch.tensor(1e-10))
-
         left_corner_tf = torch.tensor(
             left_corner, dtype=torch.float32, device=self.device, requires_grad=False
         )
@@ -238,14 +240,15 @@ class BaseDecomposition:
         )
 
         def window_function(x_in: torch.Tensor) -> torch.Tensor:
-            """$ w_i(x) = \prod_j^d (\phi((x^j - a_i^j) / \sigma_i^j) \phi((b_i^j - x^j) / \siqma_i^j) ) $"""
+            """$ w_i(x) = \prod_j^d (\text{edge}(x^j, a_i^j) \cdot \text{edge}(b_i^j, x^j)) $
+            Edge shape is delegated to `self.window_fn`"""
             x = x_in  # x (n, d)
             a = left_corner_tf + self.overlap / 2.0
             b = right_corner_tf - self.overlap / 2.0
-            left = sigmoid((x - a) * self.omega)  # (n, d)
-            right = sigmoid((b - x) * self.omega)  # (n, d)
+            per_dim = self.window_function(x, a, b)  # (n, d)
 
-            result = torch.prod(left * right, dim=1, keepdims=True)  # (n, 1)
+            result = torch.prod(per_dim, dim=1, keepdims=True)  # (n, 1)
+            # result = prod_last_dim(per_dim)  # (n, 1)
             return result
 
         return window_function
@@ -313,16 +316,13 @@ class BaseDecomposition:
         torch.Tensor
             Window values, shape (N_blocks, N_pts, 1)
         """
-
-        def sigmoid(x: torch.Tensor) -> torch.Tensor:
-            return torch.clamp(torch.sigmoid(x.clamp(-50.0, 50.0)), min=1e-16)
-
         x_exp = x.unsqueeze(0)  # (1, N_pts, d)
 
-        left = sigmoid((x_exp - self._all_a) * self.omega)  # (N_blocks, N_pts, d)
-        right = sigmoid((self._all_b - x_exp) * self.omega)
-
-        return (left * right).prod(dim=-1, keepdim=True)  # (N_blocks, N_pts, 1)
+        per_dim = self.window_function(
+            x_exp, self._all_a, self._all_b
+        )  # (N_blocks, N_pts, d)
+        # return prod_last_dim(per_dim)  # (N_blocks, N_pts, 1)
+        return torch.prod(per_dim, dim=-1, keepdims=True)  # (N_blocks, N_pts, 1)
 
     def get_config(self) -> dict:
         return dict(
@@ -334,4 +334,5 @@ class BaseDecomposition:
             points_per_block=self.points_per_block,
             omega=self.omega,
             eps=self.eps,
+            window_fn_type=self.window_function_type,
         )

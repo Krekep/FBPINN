@@ -96,6 +96,13 @@ mlflow.log_param("Blocks per axis", list(map(len, nn.decomposition.blocks_per_ax
 b_per_a = list(map(len, nn.decomposition.blocks_per_axis))
 print("Blocks per axis", b_per_a)
 
+total_params = sum(p.numel() for p in nn.parameters())
+print(f"Всего параметров: {total_params:,}")
+mlflow.log_param(f"Model params", total_params)
+trainable_params = sum(p.numel() for p in nn.parameters() if p.requires_grad)
+print(f"Обучаемых параметров: {trainable_params:,}")
+mlflow.log_param(f"Model trainable params", trainable_params)
+
 x = pde.val_input[::10]
 y = torch.tensor(pde.solution(x), device=device)
 x = torch.tensor(x, device=device)

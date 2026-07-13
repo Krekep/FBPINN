@@ -72,6 +72,7 @@ if __name__ == "__main__":
         block_size=block_size,
         block_scales=[1],
         block_shift=[1],
+        window_fn_type="sigmoid",
         overlap=overlap,
         points_per_block=points_per_block,
         eps_full=eps_full,

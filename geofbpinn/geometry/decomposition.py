@@ -22,6 +22,7 @@ class DecompositionND(BaseDecomposition):
         block_size: list[float],
         block_scales: list[float],
         block_shift: list[float],
+        window_fn_type: str = "sigmoid",
         points_per_block: int = 100,
         overlap: Optional[list[float]] = None,
         kappa: float = 0.3,
@@ -43,6 +44,8 @@ class DecompositionND(BaseDecomposition):
             Unnormalization multiplier for blocks per dimension
         block_shift: list[float]
             Unnormalization term for blocks per dimension
+        window_fn_type: str
+            Name of window function. Look at `networks.utils.get_classes.get_window_fn`
         points_per_block: int
         overlap: Optional[list[float]]
             overlaps per dimension. Mutually exclusive with `kappa`.
@@ -64,6 +67,7 @@ class DecompositionND(BaseDecomposition):
             kappa=kappa,
             omega=omega,
             eps=eps,
+            window_fn_type=window_fn_type,
             device=device,
         )
         self.domain = domain

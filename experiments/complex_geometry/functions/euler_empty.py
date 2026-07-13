@@ -2,7 +2,7 @@ import numpy as np
 import torch
 
 from .cylinder_inviscid import mse_zero
-from .phys_losses import PhysLoss
+from geofbpinn.utils.phys_losses import PhysLoss
 
 
 class NoObstacleInviscid(PhysLoss):

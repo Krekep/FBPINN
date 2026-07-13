@@ -25,34 +25,30 @@ class FBPINN(torch.nn.Module):
 
     @staticmethod
     def _compute_affected_radius(
-        omega: float,
+        decay_distance: float,
         block_size: tuple,
-        eps: float,
     ) -> int:
         """
         Compute affected_radius from decomposition parameters.
 
-        The radius is the minimum number of blocks over which the sigmoid
-        window function decays to eps.
+        The radius is the minimum number of blocks over which the
+        window function decays to ~0. `decay_distance` comes from the
+        decomposition's window strategy
 
-        decay_distance = ln(1 / eps) / omega
         radius = ceil(decay_distance / block_size)
 
         Parameters
         ----------
-        omega : float
-            Sigmoid sharpness from decomposition
+        decay_distance : float
+            From `decomposition.window_fn.decay_distance()`
         block_size : tuple
             Block size per dimension
-        eps : float
-            Numerical threshold from decomposition
 
         Returns
         -------
         int
             Computed affected radius (at least 1)
         """
-        decay_distance = math.log(1.0 / eps) / omega
         r = []
         for b in block_size:
             r.append(math.ceil(decay_distance / b))
@@ -100,7 +96,7 @@ class FBPINN(torch.nn.Module):
             Determines the radius within which the submodel takes points as input.
             The number of points for which the submodel's output is calculated
             is equal to the number of `points in the block` * `number of blocks in affected_radius`.
-            If None, automatically computed from decomposition omega, block_size and eps.
+            If None, automatically computed from decomposition window function and block_size.
         device: Optional[str]
             Device `cpu`/`cuda`
         """
@@ -122,9 +118,8 @@ class FBPINN(torch.nn.Module):
 
         if affected_radius is None:
             affected_radius = self._compute_affected_radius(
-                omega=self.decomposition.omega,
+                decay_distance=self.decomposition.window_function.decay_distance(),
                 block_size=self.decomposition.block_size,
-                eps=self.decomposition.eps,
             )
         self.affected_radius = affected_radius
 

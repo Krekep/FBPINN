@@ -3,6 +3,7 @@ from experiments.complex_geometry.cylinder_geometry import prepare_geometry, sca
 domain, hole = prepare_geometry()
 decomposition_config = {
     "polygon_vertices": domain,
+    "window_fn_type": "quintic",
     "holes": [hole],
     "block_size": (0.6, 0.6),
     "kappa": 0.2,

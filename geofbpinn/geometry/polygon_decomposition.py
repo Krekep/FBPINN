@@ -97,6 +97,7 @@ class Decomposition2DPolygon(BaseDecomposition):
         block_scales: list[float],
         block_shift: list[float],
         block_size: Tuple[float, float],
+        window_fn_type: str = "sigmoid",
         points_per_block: int = 200,
         overlap: Optional[Tuple[float, float]] = None,
         kappa: float = 0.3,
@@ -121,6 +122,8 @@ class Decomposition2DPolygon(BaseDecomposition):
             Unnormalization term for blocks per dimension
         block_size: Tuple[float, float]
             size of blocks per dimension
+        window_fn_type: str
+            Name of window function. Look at `networks.utils.get_classes.get_window_fn`
         points_per_block: int
         overlap: Optional[Tuple[float, float]]
             overlaps per dimension. Mutually exclusive with `kappa`.
@@ -146,6 +149,7 @@ class Decomposition2DPolygon(BaseDecomposition):
             kappa=kappa,
             omega=omega,
             eps=eps,
+            window_fn_type=window_fn_type,
             device=device,
         )
         self.polygon = polygon_vertices

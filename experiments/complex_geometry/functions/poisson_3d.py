@@ -1,7 +1,7 @@
 import numpy as np
 import torch
 
-from .phys_losses import PhysLoss
+from geofbpinn.utils.phys_losses import PhysLoss
 
 
 def mse_zero(p):

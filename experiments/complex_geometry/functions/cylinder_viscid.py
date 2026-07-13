@@ -3,7 +3,7 @@ import pandas as pd
 import torch
 
 from geofbpinn.geometry.geometry import sample_points_on_boundary
-from .phys_losses import PhysLoss
+from geofbpinn.utils.phys_losses import PhysLoss
 
 
 def mse_zero(p):

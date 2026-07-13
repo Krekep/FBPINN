@@ -61,6 +61,7 @@ decomp = DecompositionND(
     domain=domain,
     bbox_left=[0.0, 0.0],
     bbox_right=[1.0, 1.0],
+    window_fn_type="sigmoid",
     overlap=[0.1, 0.1],
     block_size=[0.4, 0.4],
     block_scales=[1.0, 1.0],
@@ -85,6 +86,7 @@ decomp = Decomposition2DPolygon(
     block_scales=[1.0, 1.0],
     block_shift=[0.0, 0.0],
     block_size=(0.4, 0.4),
+    window_fn_type="sigmoid",
     overlap=(0.1, 0.1),
     points_per_block=200,
     holes=[hole],
@@ -103,23 +105,27 @@ from geofbpinn.networks.topology.fbpinn.model import FBPINN
 from geofbpinn.networks.topology.fbpinn.fbpinn_train import layer_train
 from geofbpinn.networks.schedulers.layer import BaseLayerScheduler
 from geofbpinn.networks.schedulers.loss import LossScheduler
+from geofbpinn.utils.phys_losses import PhysLoss
 
-def pde_loss(fbpinn, data, active_models):
-    # residual of your PDE
-    ...
+class PDE(PhysLoss):
+  def pde_loss(fbpinn, data, active_models, introduced_models):
+      # residual of your PDE
+      ...
 
-def bc_loss(fbpinn, data, active_models):
-    # boundary condition residual
-    ...
+  def bc_loss(fbpinn, data, active_models, introduced_models):
+      # boundary condition residual
+      ...
 
 bc_polygon = [(0, 0), (1, 0), (1, 0.01), (0, 0.01)]  # bottom edge
+pde = PDE()
 
 model = FBPINN(
     input_size=2,
     output_size=1,
+    equation=pde,
     decomposition=decomp,
-    physic_loss=pde_loss,
-    boundary_loss=[(bc_loss, bc_polygon)],
+    physic_loss=pde.pde_loss,
+    boundary_loss=[(pde.bc_loss, bc_polygon)],
     activation_func="tanh",
     models_size=[32, 32],
     device="cuda",
@@ -154,6 +160,7 @@ geofbpinn/
 │   ├── decomposition.py           # DecompositionND
 │   ├── polygon_decomposition.py   # Decomposition2DPolygon, PolygonBlock
 │   ├── geometry.py                # Polygon utilities (clip, area, sampling)
+│   ├── window_functions.py        # Window functions
 │   └── plot.py                    # Decomposition visualisation
 └── networks/
     ├── topology/fbpinn/
@@ -173,3 +180,8 @@ geofbpinn/
 ## License
 
 Apache-2.0. See [LICENSE](LICENSE).
+
+## Papers
+
+- **Analysis of Training Strategies for Finite Basis PINNs (FBPINNs)**
+  [[Paper]](https://www.doi.org/10.3103/S0027134925702820) - [[Branch]](https://github.com/Krekep/FBPINN/tree/article_training_stategies)
